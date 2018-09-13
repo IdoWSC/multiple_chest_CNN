@@ -1,0 +1,21 @@
+Hayit
+
+data - X-ray sheeba 
+	2 vgg’s conv and fc
+	start as binary problem - 1 pathology vs all the rest  
+	models - opensource in keras
+	pathology - plural efusion (taflit) - specifically side 		images assist detection
+
+	LATERAL Count:
+		train/0 - 339
+		train/1 - 70
+		test/1  - 33
+		test/0  - 0
+
+	Resolution: move 109 train/0 to test/0 as ((33 / 103) * 339) 
+
+
+
+
+elik -
+openeye - 7000+ samples roughly 4000 
