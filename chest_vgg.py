@@ -803,5 +803,3 @@ if __name__ == '__main__':
         sess.run(init)
         train_writer.add_graph(sess.graph)
         sess.run(merge_summary)
-
-
