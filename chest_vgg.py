@@ -23,7 +23,7 @@ class MultiChestVGG:
     fc1_layer_in_size = 25088
 
 
-    def __init__(self, im_shape=None, num_of_classes=2, use_softmax=False, is_training=True):
+    def __init__(self, im_shape=None, num_of_classes=2, use_softmax=False, is_training=True, sess=None):
 
         if im_shape is not None and im_shape[0] is not None:
             self.place_holder_shape = [None]
@@ -47,6 +47,9 @@ class MultiChestVGG:
         self._build_classifier_layer()
 
         self.add_summeries()
+
+        self.sess = None
+        self.assign_session(sess)
 
     def _build_conv_parameters(self, trainable=False):
         """
@@ -278,22 +281,50 @@ class MultiChestVGG:
         for activation, value in self.layers.items():
             tf.summary.histogram(activation, value)
 
+    def predict(self, images_dict):
+
+        angle_keys = ('PA', 'LAT')
+        if not all([key in images_dict.keys() for key in angle_keys]):
+            raise ValueError('No PA or LAT keys in images')
+        x = {}
+        for key in angle_keys:
+            images = images_dict[key]
+            if isinstance(images, list):
+                x[key] = np.array(images)
+            elif len(images.shape) == 3:
+                x[key] = np.expand_dims(images, axis=0)
+            else:
+                x[key] = images
+        if x[angle_keys[0]].shape != x[angle_keys[1]].shape:
+            raise ValueError('PA and LAT are not in the same shape')
+
+        return self.sess.run(self.predictions, feed_dict={self.PA_images: x['PA'], self.LAT_images: x['LAT']})
+
+    def start_and_assign_session(self):
+        self.assign_session(tf.Session())
+
+    def assign_session(self, sess):
+        self.sess = sess
+
 
 class TrainNet:
 
     @classmethod
-    def with_construct_BatchOrganiser(cls, net, shuffled_loc, batch_size, learning_rate=0.001, learning_rate_decay=0.0,
-                                      epsilon=1e-8, test_split=0.2, test_file=None):
+    def with_construct_BatchOrganiser(cls, net, shuffled_loc, batch_size, starter_learning_rate=0.001,
+                                      learning_rate_decay=0.0, learning_rate_decay_step=10000, epsilon=1e-8,
+                                      test_split=0.2, test_file=None):
 
         data_set = BatchOrganiser(shuffled_loc, batch_size, test_split, test_file)
-        trainer = cls(net, data_set, learning_rate, learning_rate_decay, epsilon)
+        trainer = cls(net, data_set, starter_learning_rate, learning_rate_decay, learning_rate_decay_step, epsilon)
         return trainer
 
-    def __init__(self, net, data_set, learning_rate=0.001, learning_rate_decay=0.0, epsilon=1e-8):
+    def __init__(self, net, data_set, starter_learning_rate=0.001, learning_rate_decay=0.0,
+                 learning_rate_decay_step=10000,epsilon=1e-8):
 
         self.net = net
-        self.learning_rate = learning_rate
+        self.starter_learning_rate = starter_learning_rate
         self.learning_rate_decay = learning_rate_decay
+        self.learning_rate_decay_step = learning_rate_decay_step
         self.epsilon = epsilon
 
         self.data_set = data_set
@@ -308,36 +339,52 @@ class TrainNet:
 
     def _build_trainer(self):
 
-        with tf.device('/cpu:0'):
-            self.ground_truth = tf.placeholder(tf.float32, (None,), name='y')
-            print('\nBuilding xentropy Loss\n')
-            with tf.variable_scope('cost'):
-                if self.net.use_softmax or self.net.num_of_classes:
-                    self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.ground_truth,
-                                                                                       logits=self.net.probs))
-                else:
+        with tf.name_scope('train'):
+            with tf.device('/cpu:0'):
+                self.ground_truth = tf.placeholder(tf.float32, (None,), name='y')
+                self.global_step = tf.Variable(0, trainable=False, name='global_step')
+                print('\nBuilding xentropy Loss\n')
+                with tf.variable_scope('cost_function'):
+                    if self.net.use_softmax or self.net.num_of_classes:
+                        self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.ground_truth,
+                                                                                           logits=self.net.probs))
+                    else:
 
-                    self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.ground_truth,
-                                                                                       logits=self.net.probs))
-                tf.summary.scalar('train_accuracy', self.cost)
+                        self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.ground_truth,
+                                                                                           logits=self.net.probs))
+                    tf.summary.scalar('train_cost', self.cost)
 
-        with tf.variable_scope('train'):
-            self.learning_rate_ph = tf.placeholder(tf.float32, name='learning_rate')
-            self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate_ph,
-                                                       decay=self.learning_rate_decay,
-                                                       epsilon=self.epsilon).minimize(self.net.cost,
-                                                                                      colocate_gradients_with_ops=True)
+            with tf.variable_scope('optimizer'):
+                self.learning_rate = tf.train.exponential_decay(self.starter_learning_rate, self.global_step,
+                                                                self.learning_rate_decay_step,
+                                                                self.learning_rate_decay, staircase=True)
+                tf.summary.scalar('learning_rate', self.learning_rate)
+                self.optimizer = tf.train.RMSPropOptimizer(learning_rate=self.learning_rate, decay=0.999,
+                                                           epsilon=self.epsilon).minimize(self.cost,
+                                                                                          global_step=self.global_step)
 
-        self._merged_train_summary = tf.summary.merge_all()
-        with tf.variable_scope('validation_set'):
-            self.predicted = tf.placeholder(tf.int64, (None,), name='y_pred')
-            self.validation_accuracy = tf.reduce_mean(
-                tf.cast(tf.equal(self.net.ground_truth, self.predicted), tf.float32))
-            self.validation_accuracy_summary = tf.summary.scalar('validation_accuracy', self.validation_accuracy)
+            self._merged_train_summary = tf.summary.merge_all()
+            with tf.variable_scope('validation_set'):
+                self.predicted = tf.placeholder(tf.int64, (None,), name='y_pred')
+                self.validation_accuracy = tf.reduce_mean(
+                    tf.cast(tf.equal(self.net.ground_truth, self.predicted), tf.float32))
+                self.validation_accuracy_summary = tf.summary.scalar('validation_accuracy', self.validation_accuracy)
 
 
         # saver
         self.saver = tf.train.Saver()
+
+    def assign_session(self, sess=None):
+        if sess is None:
+            self.sess = tf.Session()
+        else:
+            self.sess = sess
+        self.net.assign_session(self.sess)
+
+    def init_variables(self):
+        # Initializing the variables
+        init = tf.global_variables_initializer()
+        self.sess.run(init)
 
     def load_weights(self, weight_file, sess):
         return self.net.load_weights_from_saver(weight_file, sess, self.saver)
@@ -352,31 +399,29 @@ class TrainNet:
 
         self.train_batch, self.train_labels, self.batch_paths = self.data_set.get_train_batch()
 
-    def batch_pass(self, sess, train_writer=None, batch_number=0, add_summary=False, add_metadata=False):
+    def batch_pass(self, sess, train_writer=None, add_summary=False, add_metadata=False):
         def run_summary():
             feed_dict = {self.net.PA_images:  self.train_batch['PA'],
                          self.net.LAT_images: self.train_batch['LAT'],
-                         self.ground_truth: self.train_labels,
-                         self.learning_rate_ph: self.learning_rate}
-            summary = sess.run(self._merged_train_summary, feed_dict=feed_dict)
+                         self.ground_truth: self.train_labels}
+            summary, batch_number = sess.run([self._merged_train_summary, self.global_step], feed_dict=feed_dict)
             train_writer.add_summary(summary, batch_number)
 
         def run_batch():
             feed_dict = {self.net.PA_images:  self.train_batch['PA'],
                          self.net.LAT_images: self.train_batch['LAT'],
-                         self.net.ground_truth: self.train_labels,
-                         self.learning_rate_ph: self.learning_rate}
+                         self.net.ground_truth: self.train_labels}
             if add_metadata:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-                _, c = sess.run([self.optimizer, self.cost],
-                                      feed_dict=feed_dict,
-                                      options=run_options,
-                                      run_metadata=run_metadata)
+                _, c, batch_number = sess.run([self.optimizer, self.cost, self.global_step],
+                                              feed_dict=feed_dict,
+                                              options=run_options,
+                                              run_metadata=run_metadata)
                 train_writer.add_run_metadata(run_metadata, 'step{}'.format(batch_number))
             else:
-                _, c = sess.run([self.optimizer, self.cost], feed_dict=feed_dict)
-            return c
+                _, c, batch_number = sess.run([self.optimizer, self.cost, self.global_step], feed_dict=feed_dict)
+            return c, batch_number
 
         # BATCH LOADING
         self.batch_advance()
@@ -385,9 +430,9 @@ class TrainNet:
             run_summary()
 
         # Run optimization op (backprop)
-        cost = run_batch()
+        cost, batch_number = run_batch()
 
-        return cost, self.batch_paths
+        return cost, self.batch_paths, batch_number
 
     def train_accuracy(self, sess):
 
@@ -510,13 +555,31 @@ class TrainNet:
             for i in range(int(dst - current)):
                 self.data_set.progress_one_batch()
 
+    def get_global_step(self):
+        return self.sess.run(self.global_step)
+
+    def calc_number_of_train_batches(self):
+        return self.calc_bacth_size(self.train_size, self.train_batch_size)
+
+    def calc_number_of_test_batches(self):
+        return self.calc_bacth_size(self.test_size, self.test_batch_size)
+
     @staticmethod
-    def init_variables(sess):
+    def calc_bacth_size(set_size, batch_size):
+        return int(set_size / batch_size) + bool(set_size % batch_size)
 
-        # Initializing the variables
-        init = tf.global_variables_initializer()
-        sess.run(init)
-
+    @staticmethod
+    def determine_batch_num(epoch, num_of_batches, overall_batch_num, start_epoch):
+        """
+        in case epoch = 0 than batch_num is equal to start_from_batch
+        """
+        if not epoch:
+            batch_num = overall_batch_num
+        elif epoch == start_epoch:
+            batch_num = overall_batch_num % (start_epoch * num_of_batches)
+        else:
+            batch_num = 0
+        return batch_num
 
 class BatchOrganiser:
     """class for arranging batches for training.
