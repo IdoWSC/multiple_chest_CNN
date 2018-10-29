@@ -4,6 +4,7 @@ import numpy as np
 import os
 from scipy.misc import imread, imresize
 from progress.bar import Bar
+from random import shuffle
 
 
 def get_available_gpus():
@@ -32,9 +33,9 @@ class MultiChestVGG:
 
         self.is_training = is_training
         self.num_of_classes = num_of_classes
-        self._softmax = use_softmax
+        self.use_softmax = use_softmax
 
-        self.PA_images = tf.placeholder(tf.float32, self.place_holder_shape, name='PA_images')
+        self.PA_images  = tf.placeholder(tf.float32, self.place_holder_shape, name='PA_images')
         self.LAT_images = tf.placeholder(tf.float32, self.place_holder_shape, name='LAT_images')
 
         self.parameters = dict()
@@ -43,6 +44,7 @@ class MultiChestVGG:
         self._build_conv_parameters()
         self._build_fc_parameters()
         self._build_net()
+        self._build_classifier_layer()
 
         self.add_summeries()
 
@@ -111,7 +113,7 @@ class MultiChestVGG:
                                         trainable=trainable)
 
             with tf.variable_scope('final'):
-                if self._softmax or self.num_of_classes > 2:
+                if self.use_softmax or self.num_of_classes > 2:
                     self.parameters['final_W'] = \
                     tf.get_variable('weights',
                                     shape=[layer_size, self.num_of_classes],
@@ -150,7 +152,7 @@ class MultiChestVGG:
             for i in range(num_gpus):
                 with tf.device(tf.DeviceSpec(device_type="GPU", device_index=i)):
                     with tf.variable_scope(tf.get_variable_scope(), reuse=True):
-                        out_split.append(model_net('gpu', i, x={'PA': in_splits['x_PA'][i],
+                        out_split.append(model_net('gpu', i, x={'PA' : in_splits['x_PA'][i],
                                                                 'LAT': in_splits['x_LAT'][i]}))
 
             return tf.concat(out_split, axis=0)
@@ -161,7 +163,7 @@ class MultiChestVGG:
                 in_splits[k] = v
             with tf.device('/cpu:0'):
                 with tf.variable_scope(tf.get_variable_scope(), reuse=True):
-                    out_split = model_net('cpu', 0, x={'PA': in_splits['x_PA'],
+                    out_split = model_net('cpu', 0, x={'PA' : in_splits['x_PA'],
                                                        'LAT': in_splits['x_LAT']})
             return out_split
 
@@ -218,26 +220,33 @@ class MultiChestVGG:
                 fc_mul = tf.matmul(layer_input, self.parameters['final_W'])
                 fc_lin = tf.nn.bias_add(fc_mul, self.parameters['final_b'])
 
-                if self._softmax or self.num_of_classes > 2:
-                    self.layers['final_{}_{}'.format(device_type, device)] = tf.nn.softmax(fc_lin)
-                else:
-                    self.layers['final_{}_{}'.format(device_type, device)] = tf.nn.sigmoid(fc_lin)
-
-                layer_input = self.layers['final_{}_{}'.format(device_type, device)]
-
+            layer_input = fc_lin
             net_output = layer_input
             return net_output
 
         if len(get_available_gpus()):
-            self.output = build_structure_per_gpu(len(get_available_gpus()), x_PA=self.PA_images, x_LAT=self.LAT_images)
+            self.final_layer = build_structure_per_gpu(len(get_available_gpus()),
+                                                       x_PA=self.PA_images,
+                                                       x_LAT=self.LAT_images)
         else:
-            self.output = build_structure_for_cpu(x_PA=self.PA_images, x_LAT=self.LAT_images)
+            self.final_layer = build_structure_for_cpu(x_PA=self.PA_images,
+                                                       x_LAT=self.LAT_images)
 
         # with tf.device('/cpu:0'):
         #     if self._softmax or self.num_of_classes > 2:
         #         self.output = tf.nn.softmax(self.fc_out)
         #     else:
         #         self.output = tf.nn.sigmoid(self.fc_out)
+
+    def _build_classifier_layer(self):
+        with tf.device('/cpu:0'):
+            with tf.variable_scope('classification'):
+                if self.use_softmax or self.num_of_classes > 2:
+                    self.probs = tf.nn.softmax(self.final_layer, name='probability')
+                    self.predictions = tf.argmax(self.probs, axis=1, name='prediction')
+                else:
+                    self.probs = tf.nn.sigmoid(self.final_layer, name='probability')
+                    self.predictions = tf.cast(tf.round(self.probs, name='prediction'), tf.int64)
 
     def load_weights_npz(self, weight_file, sess):
         weights = np.load(weight_file)
@@ -253,6 +262,15 @@ class MultiChestVGG:
         print('\nweights file is: ' + weight_file + '\n')
         saver.restore(sess, weight_file)
         return saver
+
+    def load_conv_weights_npz(self, weight_file, sess):
+        weights = np.load(weight_file)
+        keys = sorted(weights.keys())
+        for i, k in enumerate(keys):
+            if not k.startswith('conv'):
+                continue
+            print(i, k, np.shape(weights[k]))
+            sess.run(self.parameters[k].assign(weights[k]))
 
     def add_summeries(self):
         for parameter, value in self.parameters.items():
@@ -286,14 +304,21 @@ class TrainNet:
         self.train_batch_size = self.data_set.train_batch_size
         self.test_batch_size = self.data_set.test_batch_size
 
+        self._build_trainer()
+
     def _build_trainer(self):
 
         with tf.device('/cpu:0'):
             self.ground_truth = tf.placeholder(tf.float32, (None,), name='y')
             print('\nBuilding xentropy Loss\n')
             with tf.variable_scope('cost'):
-                self.output_diff = self.net.output - self.ground_truth
-                self.cost = tf.reduce_mean(tf.nn.l2_loss(self.output_diff))
+                if self.net.use_softmax or self.net.num_of_classes:
+                    self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.ground_truth,
+                                                                                       logits=self.net.probs))
+                else:
+
+                    self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.ground_truth,
+                                                                                       logits=self.net.probs))
                 tf.summary.scalar('train_accuracy', self.cost)
 
         with tf.variable_scope('train'):
@@ -306,7 +331,8 @@ class TrainNet:
         self._merged_train_summary = tf.summary.merge_all()
         with tf.variable_scope('validation_set'):
             self.predicted = tf.placeholder(tf.int64, (None,), name='y_pred')
-            self.validation_accuracy = tf.reduce_mean(tf.nn.l2_loss(self.ground_truth - self.predicted))
+            self.validation_accuracy = tf.reduce_mean(
+                tf.cast(tf.equal(self.net.ground_truth, self.predicted), tf.float32))
             self.validation_accuracy_summary = tf.summary.scalar('validation_accuracy', self.validation_accuracy)
 
 
@@ -316,33 +342,41 @@ class TrainNet:
     def load_weights(self, weight_file, sess):
         return self.net.load_weights_from_saver(weight_file, sess, self.saver)
 
+    def load_weights_npz(self, weight_file, sess):
+        return self.net.load_weights_npz(weight_file, sess)
+
+    def load_conv_weights_npz(self, weight_file, sess):
+        return self.net.load_conv_weights_npz(weight_file, sess)
+
     def batch_advance(self):
 
         self.train_batch, self.train_labels, self.batch_paths = self.data_set.get_train_batch()
 
     def batch_pass(self, sess, train_writer=None, batch_number=0, add_summary=False, add_metadata=False):
         def run_summary():
-            feed_dict = {self.net.images: self.train_batch,
+            feed_dict = {self.net.PA_images:  self.train_batch['PA'],
+                         self.net.LAT_images: self.train_batch['LAT'],
                          self.ground_truth: self.train_labels,
                          self.learning_rate_ph: self.learning_rate}
             summary = sess.run(self._merged_train_summary, feed_dict=feed_dict)
             train_writer.add_summary(summary, batch_number)
 
         def run_batch():
-            feed_dict = {self.net.images: self.train_batch,
+            feed_dict = {self.net.PA_images:  self.train_batch['PA'],
+                         self.net.LAT_images: self.train_batch['LAT'],
                          self.net.ground_truth: self.train_labels,
                          self.learning_rate_ph: self.learning_rate}
             if add_metadata:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-                _, c, output_diff = sess.run([self.optimizer, self.cost, self.output_diff],
+                _, c = sess.run([self.optimizer, self.cost],
                                       feed_dict=feed_dict,
                                       options=run_options,
                                       run_metadata=run_metadata)
                 train_writer.add_run_metadata(run_metadata, 'step{}'.format(batch_number))
             else:
-                _, c, output_diff = sess.run([self.optimizer, self.cost, self.output_diff], feed_dict=feed_dict)
-            return c, np.absolute(output_diff)
+                _, c = sess.run([self.optimizer, self.cost], feed_dict=feed_dict)
+            return c
 
         # BATCH LOADING
         self.batch_advance()
@@ -351,9 +385,9 @@ class TrainNet:
             run_summary()
 
         # Run optimization op (backprop)
-        cost, output_diff = run_batch()
+        cost = run_batch()
 
-        return cost, self.batch_paths, output_diff
+        return cost, self.batch_paths
 
     def train_accuracy(self, sess):
 
@@ -562,7 +596,7 @@ class BatchOrganiser:
                 self.shuffle_train_set()
             self.end_of_train = False
 
-        batch = []
+        batch = {'LAT': [], 'PA' : []}
         labels = []
         batch_paths = []
         for i in range(self.train_batch_size):
@@ -573,18 +607,17 @@ class BatchOrganiser:
                 self.end_of_train = True
                 break
 
-            try:
-                label, fade = self.get_sample(path, with_save_frames)
-            except OSError:
-                print('OSErros: path {} undecodeable'.format(path))
-                self.train_size -= 1
-                continue
+            label, sample = self.get_sample(path, with_save_frames)
 
             batch_paths.append(path)
             labels.append(label)
-            batch.append(fade)
+            batch['LAT'].append(sample['LAT'])
+            batch['PA'].append(sample['PA'])
 
-        return np.array(batch), np.array(labels), batch_paths
+        return_batch = {'LAT': np.array(batch['LAT']),
+                        'PA' : np.array(batch['PA'])}
+
+        return return_batch, np.array(labels), batch_paths
 
     def get_test_batch(self, with_save_frames=False):
 
@@ -600,9 +633,9 @@ class BatchOrganiser:
 
             self.end_of_test = False
 
-        batch_paths = []
-        batch = []
+        batch = {'LAT': [], 'PA': []}
         labels = []
+        batch_paths = []
         for i in range(self.test_batch_size):
 
             try:
@@ -611,102 +644,33 @@ class BatchOrganiser:
                 self.end_of_test = True
                 break
 
-            try:
-                label, fade = self.get_sample(path, with_save_frames)
-            except OSError as e:
-                print(e, '\nOSErros: path {} undecodeable'.format(path))
-                self.test_size -= 1
-                continue
+            label, sample = self.get_sample(path, with_save_frames)
             batch_paths.append(path)
             labels.append(label)
-            batch.append(fade)
+            batch['LAT'].append(sample['LAT'])
+            batch['PA'].append(sample['PA'])
 
-        return np.array(batch), np.array(labels), batch_paths
+        return_batch = {'LAT': np.array(batch['LAT']),
+                        'PA': np.array(batch['PA'])}
+
+        return return_batch, np.array(labels), batch_paths
 
     def get_sample(self, path, with_save_frames=False):
 
-        def get_frames_for_equal_range():
+        label = os.path.split(os.path.split(path)[0])[-1]
 
-            for frame in frames:
-                im = frame.copy()
-                if self.resize:
-                    im = cv2.resize(im, (self.width, self.height))
-                fade.append(im)
+        images = self.load_file(path)
 
-        def get_frames_for_bigger_range(effective_max_frames=30):
-            """
-            randomly selects where to take the amount of self.num_of_frames frames in sample from
-            :param effective_max_frames: effective maximum number of frames. limit the area that 16 frames will be
-                                         chosen from in long vid to effective_max_frames around the center. The purpose
-                                         of this parameter is so the output of long frames' list will still have a
-                                         decent proportion of fade in it.
-            :return:
-            """
+        return label, images
 
-            diff_from_effective = max((num_of_frames_in_sample - effective_max_frames, 0))
-            frame_count_difference = num_of_frames_in_sample - self.num_of_frames
-            # random index to start grabbing self.number_of_frames frames is
-            start_from = np.random.randint(int(diff_from_effective/2 + 0.5),
-                                           int(frame_count_difference - diff_from_effective/2))
-
-            for frame in range(start_from, start_from + self.num_of_frames):
-                im = frames[frame]
-                if self.resize:
-                    im = cv2.resize(im, (self.width, self.height))
-                fade.append(im)
-
-        def get_frames_for_smaller_range():
-            """randomly selects which frames to resample to fit the amount of self.num_of_frames"""
-            frame_count_difference = - (num_of_frames_in_sample - self.num_of_frames)
-
-            frame_numbers = np.array(range(num_of_frames_in_sample))
-            resample_frames = np.random.randint(0, num_of_frames_in_sample, [frame_count_difference])
-
-            frame_numbers = np.hstack((frame_numbers, resample_frames))
-            frame_numbers.sort()
-
-            for frame in frame_numbers:
-                im = frames[frame]
-                if self.resize:
-                    im = cv2.resize(im, (self.width, self.height))
-                fade.append(im)
-
-        label = os.path.split(os.path.split(path)[0])[1]
-
-        # file_name = os.path.split(path)[1]
-        # copyfile(path, file_name)
-
-        file_name = path
-        clip = VideoFileClip(file_name)
-
-        frames = []
-
-        # handle VideoFileClip.iter_frame() bug that gets extra empty frames and populates them with last valid frame
-        # like /home/wscuser/.local/lib/python3.5/site-packages/moviepy/video/io/ffmpeg_reader.py:132: UserWarning:
-        # Warning: in file {}, 2764800 bytes wanted but 0 bytes read,at frame 22/23, at time 0.73/0.74 sec.
-        # Using the last valid frame instead.
-        with warnings.catch_warnings() as w:
-            warnings.filterwarnings("error", category=UserWarning)
-            try:
-                for frame in clip.iter_frames():
-                    frames.append(frame)
-            except UserWarning:
-                pass
-
-        num_of_frames_in_sample = len(frames)
-        fade = []
-
-        if num_of_frames_in_sample == self.num_of_frames:
-            get_frames_for_equal_range()
-        elif num_of_frames_in_sample > self.num_of_frames:
-            get_frames_for_bigger_range()
-        else:
-            get_frames_for_smaller_range()
-
-        del clip
-        # os.remove(file_name)
-
-        return label, np.array(fade)
+    @staticmethod
+    def load_file(path):
+        base_name = '_'.join(path.split('_')[:-1])
+        file_ext = path.split('.')[-1]
+        im = {}
+        im['LAT'] = imread(base_name + '_LAT' + file_ext)
+        im['PA']  = imread(base_name + '_PA'  + file_ext)
+        return im
 
     def shuffle_train_set(self):
         train_list = list(self.train)
@@ -801,5 +765,6 @@ if __name__ == '__main__':
         # Tensorboard
         init = tf.global_variables_initializer()
         sess.run(init)
+        a.load_conv_weights_npz(r'./vgg_weights/vgg16_weights.npz', sess)
         train_writer.add_graph(sess.graph)
-        sess.run(merge_summary)
+
