@@ -37,8 +37,7 @@ logging.info('train label is {}'.format(label))
 
 def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_split=0.2, random_test_mapping=None,
               epochs=20, train_batch_size=10, test_batch_size=None, train_summary=True, parameter_string='',
-              learning_rate=0.0001, display_step=100, learning_rate_decay_step=500, learning_rate_decay=0.5,
-              start_from_batch=0):
+              learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5):
 
     net = MultiChestVGG()
 
@@ -49,9 +48,7 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
     logging.info(('\ncreating TrainNet object with learning rate of {}'.format(learning_rate)))
     trainer = TrainNet(net,
                        samples,
-                       starter_learning_rate=learning_rate,
-                       learning_rate_decay=learning_rate_decay,
-                       learning_rate_decay_step=learning_rate_decay_step)
+                       learning_rate=learning_rate)
 
     train_writer = tf.summary.FileWriter(os.path.join(os.path.join(model_save_dir, 'train_graph'), 'graph'))
 
@@ -105,7 +102,8 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
 
                 if not global_step % display_step:
 
-                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(train_writer,
+                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(dropout,
+                                                                                        train_writer,
                                                                                         add_summary=True,
                                                                                         add_metadata=True)
                     logging.info('batch {0} cost is : {1}'.format(global_step, c))
@@ -113,7 +111,8 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
                 elif not global_step % 5:  # print progress every 5 steps
                     # try batch pass, a value error can be caused from inner objects trying to predict a 0 length batch.
 
-                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(train_writer, add_summary=True)
+                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(dropout,
+                                                                                        train_writer, add_summary=True)
                     logging.info('batch {0} cost is : {1}'.format(global_step, c))
                 else:
 
@@ -177,9 +176,6 @@ if __name__ == '__main__':
     test_split = float(config['train']['test_split'])
     display_step = int(config['train']['display_step'])
     learning_rate = float(config['train']['learning_rate'])
-    learning_rate_decay_step = int(config['train']['learning_rate_decay_step'])
-    learning_rate_decay = float(config['train']['learning_rate_decay'])
-
     conv_weights_path = config['train']['conv_weights']
 
     if not test_split:
@@ -203,7 +199,5 @@ if __name__ == '__main__':
           '\n')
 
     validation_accuracy = model_fit(train_graph, model_save_dir, conv_weights_path, test_split, test_graph, epochs,
-                                    train_batch_size, learning_rate=learning_rate,
-                                    learning_rate_decay_step=learning_rate_decay_step,
-                                    learning_rate_decay=learning_rate_decay)
+                                    train_batch_size, learning_rate=learning_rate)
 
