@@ -28,7 +28,7 @@ class MultiChestVGG:
     net_name = 'MultiChestVGG'
 
 
-    def __init__(self, im_shape=None, num_of_classes=2, use_softmax=False, is_training=True, sess=None,
+    def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
                  use_batch_norm=False):
 
         if im_shape is not None and im_shape[0] is not None:
@@ -440,17 +440,17 @@ class TrainNet:
 
         with tf.name_scope('train'):
             with tf.device('/cpu:0'):
-                self.ground_truth = tf.placeholder(tf.float32, (None,), name='y')
+                self.ground_truth = tf.placeholder(tf.int64, (None,), name='y')
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
                 print('\nBuilding xentropy Loss\n')
                 with tf.variable_scope('cost_function'):
-                    if self.net.use_softmax or self.net.num_of_classes:
+                    if self.net.use_softmax or self.net.num_of_classes > 1:
                         self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.ground_truth,
                                                                                            logits=self.net.final_layer))
                     else:
 
                         self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.ground_truth,
-                                                                                           logits=self.net.final_layer))
+                                                                                           logits=tf.reshape(self.net.final_layer, (-1, ))))
                     tf.summary.scalar('train_cost', self.cost)
 
             with tf.variable_scope('optimizer'):
@@ -463,7 +463,7 @@ class TrainNet:
             with tf.variable_scope('validation_set'):
                 self.predicted = tf.placeholder(tf.int64, (None,), name='y_pred')
                 self.validation_accuracy = tf.reduce_mean(
-                    tf.cast(tf.equal(self.net.ground_truth, self.predicted), tf.float32))
+                    tf.cast(tf.equal(self.ground_truth, self.predicted), tf.float32))
                 self.validation_accuracy_summary = tf.summary.scalar('validation_accuracy', self.validation_accuracy)
 
 
@@ -770,6 +770,8 @@ class BatchOrganiser:
                 break
 
             label, sample = self.get_sample(path, with_save_frames)
+            # for key, val in sample.items():
+            #     sample[key] = np.tile(np.expand_dims(val, -1), [1, 1, 3])
 
             batch_paths.append(path)
             labels.append(label)
@@ -819,7 +821,7 @@ class BatchOrganiser:
 
     def get_sample(self, path, with_save_frames=False):
 
-        label = os.path.split(os.path.split(path)[0])[-1]
+        label = int(os.path.split(os.path.split(os.path.split(path)[0])[0])[-1])
 
         images = self.load_file(path)
 
@@ -830,8 +832,8 @@ class BatchOrganiser:
         base_name = '_'.join(path.split('_')[:-1])
         file_ext = path.split('.')[-1]
         im = {}
-        im['LAT'] = imread(base_name + '_LAT' + file_ext)
-        im['PA']  = imread(base_name + '_PA'  + file_ext)
+        im['LAT'] = np.tile(np.expand_dims(imread(base_name + '_LAT.' + file_ext), -1), [1, 1, 3])
+        im['PA']  = np.tile(np.expand_dims(imread(base_name + '_PA.'  + file_ext), -1), [1, 1, 3])
         return im
 
     def shuffle_train_set(self):

@@ -20,7 +20,7 @@ def init_logging(out_path='', level=logging.INFO):
 
 
 config = ConfigParser()
-config.read('train_init.ini')
+config.read('init.ini')
 
 now = time.localtime(time.time())
 
@@ -81,7 +81,7 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
         train_writer.add_graph(sess.graph)
 
         trainer.init_variables()
-        trainer.load_conv_weights_npz(conv_weights_path)
+        trainer.load_conv_weights_npz(conv_weights_path, sess)
 
         trainer.jump_forward_to_batch(start_from_batch)
         global_step = trainer.get_global_step()
@@ -102,7 +102,8 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
 
                 if not global_step % display_step:
 
-                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(dropout,
+                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(sess,
+                                                                                        dropout,
                                                                                         train_writer,
                                                                                         add_summary=True,
                                                                                         add_metadata=True)
@@ -111,20 +112,21 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
                 elif not global_step % 5:  # print progress every 5 steps
                     # try batch pass, a value error can be caused from inner objects trying to predict a 0 length batch.
 
-                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(dropout,
+                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(sess,
+                                                                                        dropout,
                                                                                         train_writer, add_summary=True)
                     logging.info('batch {0} cost is : {1}'.format(global_step, c))
                 else:
 
-                    c, batch_paths, batch_errors_vec, global_step = trainer.batch_pass(train_writer)
+                    c, batch_paths, batch_errors_vec, global_step = trainer.batch_pass(sess, train_writer)
 
                 # Display logs per epoch
                 if global_step % display_step == 1 and train_summary:  # enter validation set evaluation
 
                     # Calculate the accuracy on the training-batch.
-                    acc_train = trainer.train_accuracy()
+                    acc_train = trainer.train_accuracy(sess)
 
-                    acc_validation, summary, print_to_log = trainer.get_validation_accuracy()
+                    acc_validation, summary, print_to_log = trainer.get_validation_accuracy(sess)
                     train_writer.add_summary(summary, global_step)
                     # print_to_log.insert(0, 'validation_accuracy = {}'.format(acc_validation))
                     # print_to_log.append('#' * 30)
@@ -137,7 +139,7 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
                         last_improvement = global_step
 
                         # Save all variables of the TensorFlow graph to file.
-                        trainer.save_model(save_path)
+                        trainer.save_model(sess, save_path)
 
                         # A string to be printed below, shows improvement found.
                         improved_str = '; best result, saving weights'
