@@ -499,7 +499,7 @@ class TrainNet:
         def run_summary():
             feed_dict = {self.net.PA_images:  self.train_batch['PA'],
                          self.net.LAT_images: self.train_batch['LAT'],
-                         self.ground_truth: self.train_labels
+                         self.ground_truth: self.train_labels,
                          self.net.dropout_keep_prob: 1.0}
             summary, batch_number = sess.run([self._merged_train_summary, self.global_step], feed_dict=feed_dict)
             train_writer.add_summary(summary, batch_number)
