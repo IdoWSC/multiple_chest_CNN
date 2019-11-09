@@ -201,5 +201,5 @@ if __name__ == '__main__':
           '\n')
 
     validation_accuracy = model_fit(train_graph, model_save_dir, conv_weights_path, test_split, test_graph, epochs,
-                                    train_batch_size, learning_rate=learning_rate)
+                                    train_batch_size, learning_rate=learning_rate, display_step=display_step)
 
