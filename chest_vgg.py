@@ -603,7 +603,8 @@ class TrainNet:
 
             if not test_batch['PA'].size:
                 break
-            feed_dict = {self.net.images: test_batch,
+            feed_dict = {self.net.PA_images:  self.train_batch['PA'],
+                         self.net.LAT_images: self.train_batch['LAT'],
                          self.ground_truth: test_labels}
 
             net_output = sess.run(self.net.output, feed_dict=feed_dict)
