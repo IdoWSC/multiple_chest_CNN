@@ -440,7 +440,7 @@ class TrainNet:
 
         with tf.name_scope('train'):
             with tf.device('/cpu:0'):
-                self.ground_truth = tf.placeholder(tf.float32, (None,), name='y')
+                self.ground_truth = tf.placeholder(tf.int64, (None,), name='y')
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
                 print('\nBuilding xentropy Loss\n')
                 with tf.variable_scope('cost_function'):
@@ -449,7 +449,7 @@ class TrainNet:
                                                                                            logits=self.net.final_layer))
                     else:
 
-                        self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=self.ground_truth,
+                        self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.cast(self.ground_truth, tf.float32),
                                                                                            logits=tf.reshape(self.net.final_layer, (-1, ))))
                     tf.summary.scalar('train_cost', self.cost)
 
