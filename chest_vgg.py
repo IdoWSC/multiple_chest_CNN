@@ -286,7 +286,7 @@ class MultiChestVGG:
 
                 with tf.variable_scope('final_{}'.format(device)):
                     fc_mul = tf.matmul(layer_input, self.parameters['final_W'])
-                    fc_lin = tf.nn.bias_add(fc_mul, self.parameters['final_b'])
+                    fc_lin = tf.reshape(tf.nn.bias_add(fc_mul, self.parameters['final_b']), (-1, ))
 
                 layer_input = fc_lin
                 net_output = layer_input
