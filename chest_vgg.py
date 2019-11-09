@@ -536,7 +536,7 @@ class TrainNet:
 
         return sess.run(self.cost, {self.net.PA_images:  self.train_batch['PA'],
                                     self.net.LAT_images: self.train_batch['LAT'],
-                                    self.net.dropout_keep_prob
+                                    self.net.dropout_keep_prob: 1.0,
                                     self.ground_truth: self.train_labels})
 
     def get_validation_accuracy(self, sess):
