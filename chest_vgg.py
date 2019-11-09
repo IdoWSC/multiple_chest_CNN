@@ -601,6 +601,14 @@ class TrainNet:
 
             test_batch, test_labels, batch_paths = self.data_set.get_test_batch()
 
+            batch_size_gap = len(output_arr[j * self.test_batch_size: (j + 1) * self.test_batch_size]) - \
+                             len(test_batch)
+
+            # if in the last batch, batch size is shortened for multiple gpu usage
+            if self.data_set.end_of_test_epoch() and batch_size_gap:
+                ground_truth_arr = ground_truth_arr[:-batch_size_gap]
+                output_arr = output_arr[:-batch_size_gap]
+
             if not test_batch['PA'].size:
                 break
             feed_dict = {self.net.PA_images:  self.train_batch['PA'],
