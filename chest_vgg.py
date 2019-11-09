@@ -607,7 +607,7 @@ class TrainNet:
                          self.net.LAT_images: self.train_batch['LAT'],
                          self.ground_truth: test_labels}
 
-            net_output = sess.run(self.net.output, feed_dict=feed_dict)
+            net_output = sess.run(self.net.predictions, feed_dict=feed_dict)
             try:
                 ground_truth_arr[j * self.test_batch_size: (j + 1) * self.test_batch_size] = test_labels
                 output_arr[j * self.test_batch_size: (j + 1) * self.test_batch_size] = net_output
