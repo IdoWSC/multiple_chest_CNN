@@ -605,6 +605,7 @@ class TrainNet:
                 break
             feed_dict = {self.net.PA_images:  self.train_batch['PA'],
                          self.net.LAT_images: self.train_batch['LAT'],
+                         self.net.dropout_keep_prob: 1.0,
                          self.ground_truth: test_labels}
 
             net_output = sess.run(self.net.predictions, feed_dict=feed_dict)
