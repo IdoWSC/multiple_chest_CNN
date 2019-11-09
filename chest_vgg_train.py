@@ -118,7 +118,7 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
                     logging.info('batch {0} cost is : {1}'.format(global_step, c))
                 else:
 
-                    c, batch_paths, global_step = trainer.batch_pass(sess, train_writer)
+                    c, batch_paths, global_step = trainer.batch_pass(sess, dropout, train_writer)
 
                 # Display logs per epoch
                 if global_step % display_step == 1 and train_summary:  # enter validation set evaluation
