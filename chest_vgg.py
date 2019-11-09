@@ -536,7 +536,7 @@ class TrainNet:
 
         return sess.run(self.cost, {self.net.PA_images:  self.train_batch['PA'],
                                     self.net.LAT_images: self.train_batch['LAT'],
-                                    self.net.dropout_keep_prob: 1.0,
+                                    self.net.dropout_keep_prob
                                     self.ground_truth: self.train_labels})
 
     def get_validation_accuracy(self, sess):
@@ -601,7 +601,7 @@ class TrainNet:
 
             test_batch, test_labels, batch_paths = self.data_set.get_test_batch()
 
-            if not test_batch.size:
+            if not test_batch['PA'].size:
                 break
             feed_dict = {self.net.images: test_batch,
                          self.ground_truth: test_labels}
