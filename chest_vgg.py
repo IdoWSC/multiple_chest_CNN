@@ -507,7 +507,7 @@ class TrainNet:
         def run_batch():
             feed_dict = {self.net.PA_images:  self.train_batch['PA'],
                          self.net.LAT_images: self.train_batch['LAT'],
-                         self.net.ground_truth: self.train_labels,
+                         self.ground_truth: self.train_labels,
                          self.net.dropout_keep_prob: dropout_keep_prob}
             if add_metadata:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
