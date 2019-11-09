@@ -440,7 +440,7 @@ class TrainNet:
 
         with tf.name_scope('train'):
             with tf.device('/cpu:0'):
-                self.ground_truth = tf.placeholder(tf.int64, (None,), name='y')
+                self.ground_truth = tf.placeholder(tf.float32, (None,), name='y')
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
                 print('\nBuilding xentropy Loss\n')
                 with tf.variable_scope('cost_function'):
