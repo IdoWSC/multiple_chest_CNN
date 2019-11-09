@@ -102,7 +102,7 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
 
                 if not global_step % display_step:
 
-                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(sess,
+                    c,  batch_paths, global_step = trainer.batch_pass(sess,
                                                                                         dropout,
                                                                                         train_writer,
                                                                                         add_summary=True,
@@ -112,13 +112,13 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
                 elif not global_step % 5:  # print progress every 5 steps
                     # try batch pass, a value error can be caused from inner objects trying to predict a 0 length batch.
 
-                    c,  batch_paths, batch_errors_vec, global_step = trainer.batch_pass(sess,
+                    c,  batch_paths, global_step = trainer.batch_pass(sess,
                                                                                         dropout,
                                                                                         train_writer, add_summary=True)
                     logging.info('batch {0} cost is : {1}'.format(global_step, c))
                 else:
 
-                    c, batch_paths, batch_errors_vec, global_step = trainer.batch_pass(sess, train_writer)
+                    c, batch_paths, global_step = trainer.batch_pass(sess, train_writer)
 
                 # Display logs per epoch
                 if global_step % display_step == 1 and train_summary:  # enter validation set evaluation
