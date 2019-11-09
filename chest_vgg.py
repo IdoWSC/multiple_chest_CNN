@@ -611,8 +611,8 @@ class TrainNet:
 
             if not test_batch['PA'].size:
                 break
-            feed_dict = {self.net.PA_images:  self.train_batch['PA'],
-                         self.net.LAT_images: self.train_batch['LAT'],
+            feed_dict = {self.net.PA_images:  self.test_batch['PA'],
+                         self.net.LAT_images: self.test_batch['LAT'],
                          self.net.dropout_keep_prob: 1.0,
                          self.ground_truth: test_labels}
 
