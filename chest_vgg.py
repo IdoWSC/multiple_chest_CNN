@@ -605,7 +605,7 @@ class TrainNet:
                              len(test_batch)
 
             # if in the last batch, batch size is shortened for multiple gpu usage
-            if self.data_set.end_of_test_epoch() and batch_size_gap:
+            if self.data_set.end_of_test and batch_size_gap:
                 ground_truth_arr = ground_truth_arr[:-batch_size_gap]
                 output_arr = output_arr[:-batch_size_gap]
 
