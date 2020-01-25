@@ -2,9 +2,11 @@ import tensorflow as tf
 from tensorflow.python.client import device_lib
 import numpy as np
 import os
-from scipy.misc import imread, imresize
+from imageio import imread
 from progress.bar import Bar
 from random import shuffle
+import imgaug as ia
+import imgaug.augmenters as iaa
 
 
 def get_available_gpus():
@@ -134,7 +136,6 @@ class MultiChestVGG:
                                                 dtype=np.float32,
                                                 initializer=tf.ones_initializer(),
                                                 trainable=False)
-
 
     def _build_fc_parameters(self, trainable=True):
 
@@ -692,13 +693,15 @@ class TrainNet:
         return batch_num
 
 
+
 class BatchOrganiser:
     """class for arranging batches for training.
     if test split == 0 then a path of test folder given at test_graph_loc will be used to load test_graph_loc.
     else test set will be empty"""
     def __init__(self, train_file_graph_path, train_batch_size, test_batch_size=None, test_split=0.2, test_file_graph_path=None,
                  num_of_frames=16, require_resize=False, resize_height=112, resize_width=112,
-                 save_frame_location='', shuffle_each_epoch=False):
+                 save_frame_location='', shuffle_each_epoch=False, image_augmentations=False,
+                 augmentation_probability=0.25):
 
         self.train_batch_size = train_batch_size
 
@@ -747,6 +750,12 @@ class BatchOrganiser:
         self.end_of_train = False
         self.end_of_test = False
 
+        self.image_augmentations = image_augmentations
+        if self.image_augmentations:
+            self.init_augmentations(augmentation_probability)
+        else:
+            self.aug = None
+
     def _load_test_set_from_file(self):
         test_file_graph = open(self.test_file_graph_path, 'r')
         test_images = test_file_graph.read().split('\n')
@@ -760,6 +769,9 @@ class BatchOrganiser:
         test_file_graph.close()
         self.test_size = len(test_images)
         self.test = (clip for clip in test_images)
+
+    def init_augmentations(self, augmentation_probability):
+        self.aug = augment_function(augmentation_probability)
 
     def get_train_batch(self, with_save_frames=False):
 
@@ -820,7 +832,7 @@ class BatchOrganiser:
                 self.end_of_test = True
                 break
 
-            label, sample = self.get_sample(path, with_save_frames)
+            label, sample = self.get_sample(path, with_save_frames, False)
             batch_paths.append(path)
             labels.append(label)
             batch['LAT'].append(sample['LAT'])
@@ -831,13 +843,20 @@ class BatchOrganiser:
 
         return return_batch, np.array(labels), batch_paths
 
-    def get_sample(self, path, with_save_frames=False):
+    def get_sample(self, path, with_save_frames=False, im_aug=True):
 
         label = int(os.path.split(os.path.split(os.path.split(path)[0])[0])[-1])
 
         images = self.load_file(path)
 
-        return label, images
+        if im_aug and self.image_augmentations:
+            images_for_train = {}
+            for angle, im in images.items():
+                images_for_train[angle] = self.im_aug(im)
+        else:
+            images_for_train = images
+
+        return label, images_for_train
 
     @staticmethod
     def load_file(path):
@@ -847,6 +866,9 @@ class BatchOrganiser:
         im['LAT'] = np.tile(np.expand_dims(imread(base_name + '_LAT.' + file_ext), -1), [1, 1, 3])
         im['PA']  = np.tile(np.expand_dims(imread(base_name + '_PA.'  + file_ext), -1), [1, 1, 3])
         return im
+
+    def im_aug(self, images_to_aug):
+        return self.aug(image=images_to_aug)
 
     def shuffle_train_set(self):
         train_list = list(self.train)
@@ -932,6 +954,33 @@ class TrainLog:
         if not os.path.exists(path):
             os.mkdir(path)
 
+def augment_function(augmentation_probability):
+    sometimes_aug = lambda aug: iaa.Sometimes(augmentation_probability, aug)  # sometimes augment function
+    seq = iaa.Sequential(
+        [
+            sometimes_aug(iaa.Add((-50, 50))),
+            iaa.Fliplr(augmentation_probability),
+            sometimes_aug(iaa.Affine(
+                scale={
+                    'x': (0.8, 1.2),
+                    'y': (0.8, 1.2),
+                },
+                translate_percent={
+                    'x': (-0.1, 0.1),
+                    'y': (-0.1, 0.1)
+                },
+                shear=(-30, 30),
+
+            )),
+            sometimes_aug(iaa.PerspectiveTransform(
+                scale=(0.0, 0.08),
+                keep_size=True,
+
+            ))
+
+        ]
+    )
+    return seq
 
 if __name__ == '__main__':
     a = MultiChestVGG(use_batch_norm=True)

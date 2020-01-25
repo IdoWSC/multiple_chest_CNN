@@ -37,13 +37,13 @@ logging.info('train label is {}'.format(label))
 
 def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_split=0.2, random_test_mapping=None,
               epochs=20, train_batch_size=10, test_batch_size=None, train_summary=True, parameter_string='',
-              learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5):
+              learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5, use_augmentations=True):
 
     net = MultiChestVGG()
 
     logging.info('\ncreating BatchOrganiser')
     samples = BatchOrganiser(random_train_mapping, train_batch_size, test_batch_size, test_split, random_test_mapping,
-                             shuffle_each_epoch=True)
+                             shuffle_each_epoch=True, image_augmentations=use_augmentations)
 
     logging.info(('\ncreating TrainNet object with learning rate of {}'.format(learning_rate)))
     trainer = TrainNet(net,
@@ -194,6 +194,11 @@ if __name__ == '__main__':
         epochs = int(config['train']['epochs'])
     except KeyError:
         epochs = 50
+
+    try:
+        use_augmentations = bool(int(config['train']['use_augmentations']))
+    except KeyError:
+        use_augmentations = True
 
     parameter_string = ''
 
