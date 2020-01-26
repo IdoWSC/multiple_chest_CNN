@@ -100,22 +100,19 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
 
             while True:
 
-                if not global_step % display_step:
+                if False:  # leave metadata for now
+                # if not global_step % display_step:
 
-                    c,  batch_paths, global_step = trainer.batch_pass(sess,
-                                                                                        dropout,
-                                                                                        train_writer,
-                                                                                        add_summary=True,
-                                                                                        add_metadata=True)
-                    logging.info('batch {0} cost is : {1}'.format(global_step, c))
+                    c, accuracy, batch_paths, global_step = trainer.batch_pass(sess, dropout, train_writer,
+                                                                                add_summary=True, add_metadata=True)
+                    logging.info('batch {0} cost is : {1}, accuracy: {2}'.format(global_step, c, accuracy))
 
                 elif not global_step % 5:  # print progress every 5 steps
                     # try batch pass, a value error can be caused from inner objects trying to predict a 0 length batch.
 
-                    c,  batch_paths, global_step = trainer.batch_pass(sess,
-                                                                                        dropout,
-                                                                                        train_writer, add_summary=True)
-                    logging.info('batch {0} cost is : {1}'.format(global_step, c))
+                    c, accuracy, batch_paths, global_step = trainer.batch_pass(sess, dropout, train_writer,
+                                                                               add_summary=True)
+                    logging.info('batch {0} cost is : {1}, accuracy: {2}'.format(global_step, c, accuracy))
                 else:
 
                     c, batch_paths, global_step = trainer.batch_pass(sess, dropout, train_writer)
@@ -131,7 +128,7 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
                     # print_to_log.insert(0, 'validation_accuracy = {}'.format(acc_validation))
                     # print_to_log.append('#' * 30)
 
-                    if acc_validation < best_validation_accuracy:
+                    if acc_validation > best_validation_accuracy:
                         # Update the best-known validation accuracy.
                         best_validation_accuracy = acc_validation
 

@@ -23,8 +23,8 @@ class MultiChestVGG:
     conv_units = (2, 2, 3, 3, 3)
     conv_filter_sizes = (64, 128, 256, 512, 512)
     conv_batch_norm = (True, True, False, False, False)
-    fc_layers = 3
-    fc_layer_sizes = (4096, 4096, 1000)
+    fc_layers = 2
+    fc_layer_sizes = (4096, 4096)
     fc_dropout_layers = (True, True, False)
     fc1_layer_in_size = 25088
     net_name = 'MultiChestVGG'
@@ -344,6 +344,14 @@ class MultiChestVGG:
             self.final_layer = build_structure_for_cpu(x_PA=self.PA_images,
                                                        x_LAT=self.LAT_images)
 
+        if self.use_softmax:
+            self.probs = tf.nn.softmax(self.final_layer, axis=-1, name='probs')
+            self.predictions = tf.argmax(self.probs, axis=-1, name='predictions')
+        else:
+            self.probs = tf.nn.sigmoid(self.final_layer, name='probs')
+            self.predictions = tf.cast(tf.greater(self.probs, tf.constant(0.5, dtype=tf.float32)), dtype=tf.int8,
+                                       name='predictions')
+
         # with tf.device('/cpu:0'):
         #     if self._softmax or self.num_of_classes > 2:
         #         self.output = tf.nn.softmax(self.fc_out)
@@ -454,11 +462,18 @@ class TrainNet:
             with tf.device('/cpu:0'):
                 self.ground_truth = tf.placeholder(tf.int64, (None,), name='y')
                 self.global_step = tf.Variable(0, trainable=False, name='global_step')
+
+                with tf.variable_scope('train_accuracy'):
+                    self.correct_prediction = tf.equal(self.net.predictions, self.ground_truth)
+                    self.accuracy = tf.reduce_mean(tf.cast(self.correct_prediction, tf.float32))
+
+                    tf.summary.scalar('accuracy', self.accuracy)
                 print('\nBuilding xentropy Loss\n')
                 with tf.variable_scope('cost_function'):
                     if self.net.use_softmax or self.net.num_of_classes > 1:
                         self.cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels=self.ground_truth,
                                                                                            logits=self.net.final_layer))
+
                     else:
 
                         self.cost = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.cast(self.ground_truth, tf.float32),
@@ -524,14 +539,15 @@ class TrainNet:
             if add_metadata:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
-                _, c, batch_number = sess.run([self.optimizer, self.cost, self.global_step],
-                                              feed_dict=feed_dict,
-                                              options=run_options,
-                                              run_metadata=run_metadata)
+                _, c, accuracy, batch_number = sess.run([self.optimizer, self.cost, self.accuracy, self.global_step],
+                                                        feed_dict=feed_dict,
+                                                        options=run_options,
+                                                        run_metadata=run_metadata)
                 train_writer.add_run_metadata(run_metadata, 'step{}'.format(batch_number))
             else:
-                _, c, batch_number = sess.run([self.optimizer, self.cost, self.global_step], feed_dict=feed_dict)
-            return c, batch_number
+                _, c, accuracy, batch_number = sess.run([self.optimizer, self.cost, self.accuracy, self.global_step],
+                                              feed_dict=feed_dict)
+            return c, accuracy, batch_number
 
         # BATCH LOADING
         self.batch_advance()
@@ -540,16 +556,16 @@ class TrainNet:
             run_summary()
 
         # Run optimization op (backprop)
-        cost, batch_number = run_batch()
+        cost, accuracy, batch_number = run_batch()
 
-        return cost, self.batch_paths, batch_number
+        return cost, accuracy, self.batch_paths, batch_number
 
     def train_accuracy(self, sess):
 
-        return sess.run(self.cost, {self.net.PA_images:  self.train_batch['PA'],
-                                    self.net.LAT_images: self.train_batch['LAT'],
-                                    self.net.dropout_keep_prob: 1.0,
-                                    self.ground_truth: self.train_labels})
+        return sess.run(self.accuracy, {self.net.PA_images:  self.train_batch['PA'],
+                                        self.net.LAT_images: self.train_batch['LAT'],
+                                        self.net.dropout_keep_prob: 1.0,
+                                        self.ground_truth: self.train_labels})
 
     def get_validation_accuracy(self, sess):
 
