@@ -31,7 +31,7 @@ class MultiChestVGG:
 
 
     def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
-                 use_batch_norm=False):
+                 use_batch_norm=False, use_common_conv_weights=True):
 
         if im_shape is not None and im_shape[0] is not None:
             self.place_holder_shape = [None]
@@ -55,7 +55,7 @@ class MultiChestVGG:
 
         with tf.variable_scope(self.net_name):
             with tf.variable_scope('conv_variables'):
-                self._build_conv_parameters()
+                self._build_conv_parameters(use_common_weights=use_common_conv_weights)
             with tf.variable_scope('fc_variables'):
                 self._build_fc_parameters()
             self._build_net()
@@ -66,7 +66,7 @@ class MultiChestVGG:
         self.sess = None
         self.assign_session(sess)
 
-    def _build_conv_parameters(self, trainable=False):
+    def _build_conv_parameters(self, trainable=False, use_common_weights=True):
         """
         :param layers: int - number of layers
         :param units: iterable of ints, amount of units per layer, len(units) = layers
@@ -90,7 +90,13 @@ class MultiChestVGG:
                         out_filters = self.conv_filter_sizes[layer]
 
                         name_extension = '{}_{}_{}'.format(angle, layer + 1, unit + 1)
-                        with tf.variable_scope('conv_{}'.format(name_extension)):
+
+                        if not use_common_weights:
+                            var_extension = name_extension
+                        else:
+                            var_extension = '{}_{}'.format(layer + 1, unit + 1)
+
+                        with tf.variable_scope('conv_{}'.format(var_extension), reuse=tf.AUTO_REUSE):
                             self.parameters['conv_{}_W'.format(name_extension)] = \
                                 tf.get_variable('weights',
                                                 shape=[3, 3, in_filters, out_filters],
@@ -110,7 +116,12 @@ class MultiChestVGG:
                     if self.conv_batch_norm[layer]:
                         bn_param_shape = np.append(shape_calculator.copy(), out_filters)
 
-                        with tf.variable_scope('bn_{}'.format('{}_{}'.format(angle, layer + 1))):
+                        if use_common_weights:
+                            name_extension = '{}'.format(layer + 1)
+                        else:
+                            name_extension = '{}_{}'.format(angle, layer + 1)
+
+                        with tf.variable_scope('bn_{}'.format(name_extension), reuse=tf.AUTO_REUSE):
                             self.parameters['conv_{}_{}_bn_scale'.format(angle, layer + 1)] = \
                                 tf.get_variable('conv{}_bn_scale'.format(layer + 1),
                                                 shape=bn_param_shape,
