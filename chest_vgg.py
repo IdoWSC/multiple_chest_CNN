@@ -18,6 +18,7 @@ NUM_OF_GPUS = len(get_available_gpus())
 
 class MultiChestVGG:
 
+    chest_angles = ['PA', 'LAT']
     place_holder_shape = [None, 224, 224, 3]
     conv_layers = 5
     conv_units = (2, 2, 3, 3, 3)
@@ -45,10 +46,8 @@ class MultiChestVGG:
 
         self.conv_batch_norm = tuple([bool(use_batch_norm * layer) for layer in self.conv_batch_norm])
 
-        with tf.variable_scope('input'):
-            self.dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_prob')
-            self.PA_images  = tf.placeholder(tf.float32, self.place_holder_shape, name='PA_images')
-            self.LAT_images = tf.placeholder(tf.float32, self.place_holder_shape, name='LAT_images')
+        self.input_images_by_angles = {}
+        self.build_input()
 
         self.parameters = dict()
         self.layers = dict()
@@ -66,6 +65,14 @@ class MultiChestVGG:
         self.sess = None
         self.assign_session(sess)
 
+    def build_input(self):
+        with tf.variable_scope('input'):
+            self.dropout_keep_prob = tf.placeholder(dtype=tf.float32, name='dropout_prob')
+            for angle in self.chest_angles:
+                self.input_images_by_angles[angle] = tf.placeholder(tf.float32,
+                                                                    self.place_holder_shape,
+                                                                    name='{}_images'.format(angle))
+
     def _build_conv_parameters(self, trainable=False, use_common_weights=True):
         """
         :param layers: int - number of layers
@@ -77,13 +84,15 @@ class MultiChestVGG:
         out_filters = 0  # init
 
         with tf.device('/cpu:0'):
-            for angle in ['PA', 'LAT']:
+            for angle in self.chest_angles:
                 shape_calculator = np.array(self.place_holder_shape[1:3])
                 for layer in range(self.conv_layers):
                     for unit in range(self.conv_units[layer]):
 
                         if not layer and not unit:
-                            in_filters = self.PA_images.get_shape()[-1]
+                            # check the shape of one of the inputs
+                            angle_input = next(self.input_images_by_angles.values())
+                            in_filters = angle_input.get_shape()[-1]
                         else:
                             in_filters = out_filters
 
@@ -154,7 +163,7 @@ class MultiChestVGG:
         with tf.device('/cpu:0'):
             for layer in range(self.fc_layers):
                 if not layer:
-                    in_size = 2 * self.fc1_layer_in_size
+                    in_size = len(self.chest_angles) * self.fc1_layer_in_size
                 else:
                     in_size = layer_size
 
@@ -206,143 +215,11 @@ class MultiChestVGG:
                                     trainable=trainable)
 
     def _build_net(self):
-        def build_structure_per_gpu(num_gpus, **kwargs):
 
-            in_splits = {}
-            for k, v in kwargs.items():
-                in_splits[k] = tf.split(v, num_gpus)
-            out_split = []
-            for i in range(num_gpus):
-                with tf.device(tf.DeviceSpec(device_type="GPU", device_index=i)):
-                    with tf.variable_scope('GPU_{}'.format(i)):
-                        out_split.append(model_net('gpu', i, x={'PA' : in_splits['x_PA'][i],
-                                                                'LAT': in_splits['x_LAT'][i]}))
-
-            return tf.concat(out_split, axis=0)
-
-        def build_structure_for_cpu(**kwargs):
-            in_splits = {}
-            for k, v in kwargs.items():
-                in_splits[k] = v
-            with tf.device('/cpu:0'):
-                out_split = model_net('cpu', 0, x={'PA' : in_splits['x_PA'],
-                                                       'LAT': in_splits['x_LAT']})
-            return out_split
-
-        def model_net(device_type, device, x):
-
-            fc_in = []
-            mean = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32, shape=[1, 1, 1, 3], name='img_mean')
-            for angle, scan in x.items():
-                with tf.variable_scope(angle):
-                    # zero-mean input
-                    with tf.variable_scope('preprocess_{}_{}'.format(angle, device)) as scope:
-                        layer_input = scan - mean
-
-                    for layer in range(self.conv_layers):
-                        for unit in range(self.conv_units[layer]):
-                            name_extension = '{}_{}_{}'.format(angle, layer + 1, unit + 1)
-                            with tf.variable_scope('conv_{}_{}'.format(name_extension, device)):
-                                conv = tf.nn.conv2d(layer_input,
-                                                    self.parameters['conv_{}_W'.format(name_extension)],
-                                                    [1, 1, 1, 1],
-                                                    padding='SAME')
-
-                                out = tf.nn.bias_add(conv, self.parameters['conv_{}_b'.format(name_extension)])
-
-                                self.layers['conv_{}_{}_{}'.format(name_extension, device_type, str(device))] = \
-                                    tf.nn.relu(out)
-
-                            layer_input = self.layers['conv_{}_{}_{}'.format(name_extension, device_type, str(device))]
-
-                        self.layers['pool_{}_{}_{}_{}'.format(angle, layer + 1, device_type, str(device))] = \
-                            tf.nn.max_pool(layer_input,
-                                           ksize=[1, 2, 2, 1],
-                                           strides=[1, 2, 2, 1],
-                                           padding='SAME',
-                                           name='pool1')
-
-                        if self.conv_batch_norm[layer]:
-                            with tf.variable_scope('bn', reuse=tf.AUTO_REUSE):
-                                self.layers['bn_{}_{}_gpu{}'.format(angle, layer + 1, device)] = \
-                                    batch_norm(self.layers['pool_{}_{}_{}_{}'.format(angle,
-                                                                                     layer + 1,
-                                                                                     device_type,
-                                                                                     str(device))],
-                                               self.is_training,
-                                               angle,
-                                               layer,
-                                               not bool(device))
-                            layer_input = self.layers['bn_{}_{}_gpu{}'.format(angle, layer + 1, device)]
-                        else:
-                            layer_input = self.layers['pool_{}_{}_{}_{}'.format(angle, layer + 1, device_type, str(device))]
-                    fc_in.append(tf.reshape(layer_input,
-                                            [-1, self.fc1_layer_in_size]))  # squash tensor coming from conv to fc
-
-            layer_input = tf.concat(fc_in, axis=1)
-
-            with tf.variable_scope('fully_connected'):
-                for layer in range(self.fc_layers):
-                    name_extension = '{}'.format(self.conv_layers + layer + 1)
-                    with tf.variable_scope('fc{}_{}'.format(name_extension, device)):
-                        fc_mul = tf.matmul(layer_input, self.parameters['fc{}_W'.format(name_extension)])
-                        fc_lin = tf.nn.bias_add(fc_mul, self.parameters['fc{}_b'.format(name_extension)])
-
-                        self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))] = tf.nn.relu(fc_lin)
-                        if self.fc_dropout_layers[layer]:
-                            self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))] = \
-                                tf.nn.dropout(self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))],
-                                              keep_prob=self.dropout_keep_prob)
-
-                    layer_input = self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))]
-
-                with tf.variable_scope('final_{}'.format(device)):
-                    fc_mul = tf.matmul(layer_input, self.parameters['final_W'])
-                    fc_lin = tf.reshape(tf.nn.bias_add(fc_mul, self.parameters['final_b']), (-1, ))
-
-                layer_input = fc_lin
-                net_output = layer_input
-            return net_output
-
-        def batch_norm(batch, is_training, angle, layer, use_pre_weights, decay=0.99, epsilon=1e-5):
-            scale = self.parameters['conv_{}_{}_bn_scale'.format(angle, layer + 1)]
-            beta  = self.parameters['conv_{}_{}_bn_beta'.format(angle, layer + 1)]
-
-            if use_pre_weights or not is_training:
-                pop_mean = self.parameters['conv_{}_{}_bn_pop_mean'.format(angle, layer + 1)]
-                pop_var  = self.parameters['conv_{}_{}_bn_pop_var'.format(angle, layer + 1)]
-            else:
-                pop_mean = tf.get_variable('pop_mean',
-                                           shape=batch.get_shape()[1:],
-                                           dtype=np.float32,
-                                           initializer=tf.zeros_initializer(),
-                                           trainable=False)
-
-                pop_var = tf.get_variable('pop_var',
-                                          shape=batch.get_shape()[1:],
-                                          dtype=np.float32,
-                                          initializer=tf.ones_initializer(),
-                                          trainable=False)
-
-            if is_training:
-                batch_mean, batch_var = tf.nn.moments(batch, [0])
-                train_mean = tf.assign(pop_mean,
-                                       pop_mean * decay + batch_mean * (1 - decay))
-                train_var = tf.assign(pop_var,
-                                      pop_var * decay + batch_var * (1 - decay))
-                with tf.control_dependencies([train_mean, train_var]):
-                    return tf.nn.batch_normalization(batch,
-                                                     batch_mean, batch_var, beta, scale, epsilon)
-            else:
-                return tf.nn.batch_normalization(batch,
-                                                 pop_mean, pop_var, beta, scale, epsilon)
         if len(get_available_gpus()):
-            self.final_layer = build_structure_per_gpu(len(get_available_gpus()),
-                                                       x_PA=self.PA_images,
-                                                       x_LAT=self.LAT_images)
+            self.final_layer = self.build_structure_per_gpu()
         else:
-            self.final_layer = build_structure_for_cpu(x_PA=self.PA_images,
-                                                       x_LAT=self.LAT_images)
+            self.final_layer = self.build_structure_for_cpu()
 
         if self.use_softmax:
             self.probs = tf.nn.softmax(self.final_layer, axis=-1, name='probs')
@@ -357,6 +234,145 @@ class MultiChestVGG:
         #         self.output = tf.nn.softmax(self.fc_out)
         #     else:
         #         self.output = tf.nn.sigmoid(self.fc_out)
+
+    def build_structure_per_gpu(self):
+
+        num_gpus = len(get_available_gpus())
+
+        in_splits = {}
+        for angle, place_holder in self.input_images_by_angles.items():
+            in_splits[angle] = tf.split(place_holder, num_gpus)
+        out_split = []
+        for i in range(num_gpus):
+            with tf.device(tf.DeviceSpec(device_type="GPU", device_index=i)):
+                with tf.variable_scope('GPU_{}'.format(i)):
+                    x = {}
+                    # building a net on each gpu from the chest angles inputs splits
+                    for in_angle, angle_splits in in_splits:
+                        x[in_angle] = angle_splits[i]
+                    out_split.append(self.model_net('gpu', i, x=x))
+
+        return tf.concat(out_split, axis=0)
+
+    def build_structure_for_cpu(self):
+        in_splits = {}
+        for angle, place_holder in self.input_images_by_angles.items():
+            in_splits[angle] = place_holder
+        with tf.device('/cpu:0'):
+            x = {}
+            # building a net on cpu from the chest angles inputs splits
+            for in_angle, angle_splits in in_splits:
+                x[in_angle] = angle_splits
+            out_split = self.model_net('cpu', 0, x=x)
+        return out_split
+
+    def model_net(self, device_type, device, x):
+
+        fc_in = []
+        mean = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32, shape=[1, 1, 1, 3], name='img_mean')
+        for angle, scan in x.items():
+            with tf.variable_scope(angle):
+                # zero-mean input
+                with tf.variable_scope('preprocess_{}_{}'.format(angle, device)) as scope:
+                    layer_input = scan - mean
+
+                for layer in range(self.conv_layers):
+                    for unit in range(self.conv_units[layer]):
+                        name_extension = '{}_{}_{}'.format(angle, layer + 1, unit + 1)
+                        with tf.variable_scope('conv_{}_{}'.format(name_extension, device)):
+                            conv = tf.nn.conv2d(layer_input,
+                                                self.parameters['conv_{}_W'.format(name_extension)],
+                                                [1, 1, 1, 1],
+                                                padding='SAME')
+
+                            out = tf.nn.bias_add(conv, self.parameters['conv_{}_b'.format(name_extension)])
+
+                            self.layers['conv_{}_{}_{}'.format(name_extension, device_type, str(device))] = \
+                                tf.nn.relu(out)
+
+                        layer_input = self.layers['conv_{}_{}_{}'.format(name_extension, device_type, str(device))]
+
+                    self.layers['pool_{}_{}_{}_{}'.format(angle, layer + 1, device_type, str(device))] = \
+                        tf.nn.max_pool(layer_input,
+                                       ksize=[1, 2, 2, 1],
+                                       strides=[1, 2, 2, 1],
+                                       padding='SAME',
+                                       name='pool1')
+
+                    if self.conv_batch_norm[layer]:
+                        with tf.variable_scope('bn', reuse=tf.AUTO_REUSE):
+                            self.layers['bn_{}_{}_gpu{}'.format(angle, layer + 1, device)] = \
+                                self.batch_norm(self.layers['pool_{}_{}_{}_{}'.format(angle,
+                                                                                      layer + 1,
+                                                                                      device_type,
+                                                                                      str(device))],
+                                                self.is_training,
+                                                angle,
+                                                layer,
+                                                not bool(device))
+                        layer_input = self.layers['bn_{}_{}_gpu{}'.format(angle, layer + 1, device)]
+                    else:
+                        layer_input = self.layers['pool_{}_{}_{}_{}'.format(angle, layer + 1, device_type, str(device))]
+                fc_in.append(tf.reshape(layer_input,
+                                        [-1, self.fc1_layer_in_size]))  # squash tensor coming from conv to fc
+
+        layer_input = tf.concat(fc_in, axis=1)
+
+        with tf.variable_scope('fully_connected'):
+            for layer in range(self.fc_layers):
+                name_extension = '{}'.format(self.conv_layers + layer + 1)
+                with tf.variable_scope('fc{}_{}'.format(name_extension, device)):
+                    fc_mul = tf.matmul(layer_input, self.parameters['fc{}_W'.format(name_extension)])
+                    fc_lin = tf.nn.bias_add(fc_mul, self.parameters['fc{}_b'.format(name_extension)])
+
+                    self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))] = tf.nn.relu(fc_lin)
+                    if self.fc_dropout_layers[layer]:
+                        self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))] = \
+                            tf.nn.dropout(self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))],
+                                          keep_prob=self.dropout_keep_prob)
+
+                layer_input = self.layers['fc{}_{}_{}'.format(name_extension, device_type, str(device))]
+
+            with tf.variable_scope('final_{}'.format(device)):
+                fc_mul = tf.matmul(layer_input, self.parameters['final_W'])
+                fc_lin = tf.reshape(tf.nn.bias_add(fc_mul, self.parameters['final_b']), (-1,))
+
+            layer_input = fc_lin
+            net_output = layer_input
+        return net_output
+
+    def batch_norm(self, batch, is_training, angle, layer, use_pre_weights, decay=0.99, epsilon=1e-5):
+        scale = self.parameters['conv_{}_{}_bn_scale'.format(angle, layer + 1)]
+        beta = self.parameters['conv_{}_{}_bn_beta'.format(angle, layer + 1)]
+
+        if use_pre_weights or not is_training:
+            pop_mean = self.parameters['conv_{}_{}_bn_pop_mean'.format(angle, layer + 1)]
+            pop_var = self.parameters['conv_{}_{}_bn_pop_var'.format(angle, layer + 1)]
+        else:
+            pop_mean = tf.get_variable('pop_mean',
+                                       shape=batch.get_shape()[1:],
+                                       dtype=np.float32,
+                                       initializer=tf.zeros_initializer(),
+                                       trainable=False)
+
+            pop_var = tf.get_variable('pop_var',
+                                      shape=batch.get_shape()[1:],
+                                      dtype=np.float32,
+                                      initializer=tf.ones_initializer(),
+                                      trainable=False)
+
+        if is_training:
+            batch_mean, batch_var = tf.nn.moments(batch, [0])
+            train_mean = tf.assign(pop_mean,
+                                   pop_mean * decay + batch_mean * (1 - decay))
+            train_var = tf.assign(pop_var,
+                                  pop_var * decay + batch_var * (1 - decay))
+            with tf.control_dependencies([train_mean, train_var]):
+                return tf.nn.batch_normalization(batch,
+                                                 batch_mean, batch_var, beta, scale, epsilon)
+        else:
+            return tf.nn.batch_normalization(batch,
+                                             pop_mean, pop_var, beta, scale, epsilon)
 
     def _build_classifier_layer(self):
         with tf.device('/cpu:0'):
@@ -406,29 +422,48 @@ class MultiChestVGG:
 
     def predict(self, images_dict):
 
-        angle_keys = ('PA', 'LAT')
-        if not all([key in images_dict.keys() for key in angle_keys]):
-            raise ValueError('No PA or LAT keys in images')
+        if not all([angle in images_dict.keys() for angle in self.chest_angles]):
+            raise ValueError('Not all angles images are supplied for prediction')
         x = {}
-        for key in angle_keys:
-            images = images_dict[key]
+        for angle in self.chest_angles:
+            images = images_dict[angle]
             if isinstance(images, list):
-                x[key] = np.array(images)
+                x[angle] = np.array(images)
             elif len(images.shape) == 3:
-                x[key] = np.expand_dims(images, axis=0)
+                x[angle] = np.expand_dims(images, axis=0)
             else:
-                x[key] = images
-        if x[angle_keys[0]].shape != x[angle_keys[1]].shape:
-            raise ValueError('PA and LAT are not in the same shape')
+                x[angle] = images
+        if not all(angle_input.shape == x[self.chest_angles[0]].shape for angle_input in x.values()):
+            raise ValueError('angle inputs are not of the same shape')
 
-        return self.sess.run(self.predictions, feed_dict={self.PA_images: x['PA'], self.LAT_images: x['LAT'],
-                                                          self.dropout_keep_prob: 1.0})
+        feed_dict = {self.dropout_keep_prob: 1.0}
+        for angle in self.chest_angles:
+            feed_dict[self.input_images_by_angles[angle]] = x[angle]
+        return self.sess.run(self.predictions, feed_dict=feed_dict)
 
     def start_and_assign_session(self):
         self.assign_session(tf.Session())
 
     def assign_session(self, sess):
         self.sess = sess
+
+
+class PAChestVGG(MultiChestVGG):
+    chest_angles = ['PA']
+
+    def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
+                 use_batch_norm=False):
+        super().__init__(im_shape, num_of_classes, use_softmax, is_training, sess, use_batch_norm,
+                         use_common_conv_weights=True)
+
+
+class LATChestVGG(MultiChestVGG):
+    chest_angles = ['LAT']
+
+    def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
+                 use_batch_norm=False):
+        super().__init__(im_shape, num_of_classes, use_softmax, is_training, sess, use_batch_norm,
+                         use_common_conv_weights=True)
 
 
 class TrainNet:
@@ -524,18 +559,22 @@ class TrainNet:
 
     def batch_pass(self, sess, dropout_keep_prob, train_writer=None, add_summary=False, add_metadata=False):
         def run_summary():
-            feed_dict = {self.net.PA_images:  self.train_batch['PA'],
-                         self.net.LAT_images: self.train_batch['LAT'],
-                         self.ground_truth: self.train_labels,
+            feed_dict = {self.ground_truth: self.train_labels,
                          self.net.dropout_keep_prob: 1.0}
+
+            for angle in self.net.chest_angles:
+                feed_dict[self.net.input_images_by_angles[angle]] = self.train_batch[angle]
+
             summary, batch_number = sess.run([self._merged_train_summary, self.global_step], feed_dict=feed_dict)
             train_writer.add_summary(summary, batch_number)
 
         def run_batch():
-            feed_dict = {self.net.PA_images:  self.train_batch['PA'],
-                         self.net.LAT_images: self.train_batch['LAT'],
-                         self.ground_truth: self.train_labels,
+            feed_dict = {self.ground_truth: self.train_labels,
                          self.net.dropout_keep_prob: dropout_keep_prob}
+
+            for angle in self.net.chest_angles:
+                feed_dict[self.net.input_images_by_angles[angle]] = self.train_batch[angle]
+
             if add_metadata:
                 run_options = tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE)
                 run_metadata = tf.RunMetadata()
@@ -562,10 +601,12 @@ class TrainNet:
 
     def train_accuracy(self, sess):
 
-        return sess.run(self.accuracy, {self.net.PA_images:  self.train_batch['PA'],
-                                        self.net.LAT_images: self.train_batch['LAT'],
-                                        self.net.dropout_keep_prob: 1.0,
-                                        self.ground_truth: self.train_labels})
+        feed_dict = {self.ground_truth: self.train_labels,
+                     self.net.dropout_keep_prob: 1.0}
+        for angle in self.net.chest_angles:
+            feed_dict[self.net.input_images_by_angles[angle]] = self.train_batch[angle]
+
+        return sess.run(self.accuracy, feed_dict)
 
     def get_validation_accuracy(self, sess):
 
@@ -630,19 +671,17 @@ class TrainNet:
             test_batch, test_labels, batch_paths = self.data_set.get_test_batch()
 
             batch_size_gap = len(output_arr[j * self.test_batch_size: (j + 1) * self.test_batch_size]) - \
-                             len(test_batch['PA'])
+                             len(test_batch[self.net.chest_angles[0]])
 
             # if in the last batch, batch size is shortened for multiple gpu usage
             if self.data_set.end_of_test and batch_size_gap:
                 ground_truth_arr = ground_truth_arr[:-batch_size_gap]
                 output_arr = output_arr[:-batch_size_gap]
 
-            if not test_batch['PA'].size:
-                break
-            feed_dict = {self.net.PA_images:  test_batch['PA'],
-                         self.net.LAT_images: test_batch['LAT'],
-                         self.net.dropout_keep_prob: 1.0,
-                         self.ground_truth: test_labels}
+            feed_dict = {self.ground_truth: self.train_labels,
+                         self.net.dropout_keep_prob: 1.0}
+            for angle in self.net.chest_angles:
+                feed_dict[self.net.input_images_by_angles[angle]] = self.test_batch[angle]
 
             net_output = sess.run(self.net.predictions, feed_dict=feed_dict)
             try:
@@ -718,7 +757,6 @@ class TrainNet:
         else:
             batch_num = 0
         return batch_num
-
 
 
 class BatchOrganiser:
@@ -981,6 +1019,7 @@ class TrainLog:
         if not os.path.exists(path):
             os.mkdir(path)
 
+
 def augment_function(augmentation_probability):
     sometimes_aug = lambda aug: iaa.Sometimes(augmentation_probability, aug)  # sometimes augment function
     seq = iaa.Sequential(
@@ -1008,6 +1047,7 @@ def augment_function(augmentation_probability):
         ]
     )
     return seq
+
 
 if __name__ == '__main__':
     a = MultiChestVGG(use_batch_norm=True)

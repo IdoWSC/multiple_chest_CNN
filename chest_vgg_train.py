@@ -35,11 +35,11 @@ init_logging(os.path.join(model_save_dir, 'train.log'))
 logging.info('train label is {}'.format(label))
 
 
-def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_split=0.2, random_test_mapping=None,
+def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_angle, test_split=0.2, random_test_mapping=None,
               epochs=20, train_batch_size=10, test_batch_size=None, train_summary=True, parameter_string='',
               learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5, use_augmentations=True):
 
-    net = MultiChestVGG()
+    net = load_CNN(input_angle)
 
     logging.info('\ncreating BatchOrganiser')
     samples = BatchOrganiser(random_train_mapping, train_batch_size, test_batch_size, test_split, random_test_mapping,
@@ -168,6 +168,22 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, test_spli
     return best_validation_accuracy
 
 
+def load_CNN(input_angle):
+    if input_angle == 'multiple':
+        net = MultiChestVGG()
+    elif input_angle == 'PA':
+        net = PAChestVGG()
+    elif input_angle == 'LAT':
+        net = LATChestVGG()
+    else:
+        raise_angle_error(input_angle)
+    return net
+
+
+def raise_angle_error(input_angle):
+    raise ValueError('input angle "{}" is not a valid value'.format(input_angle))
+
+
 if __name__ == '__main__':
 
     train_graph = config['train']['train_graph']
@@ -176,6 +192,11 @@ if __name__ == '__main__':
     display_step = int(config['train']['display_step'])
     learning_rate = float(config['train']['learning_rate'])
     conv_weights_path = config['train']['conv_weights']
+
+    input_angle = config['train']['input_angle']
+
+    if input_angle not in ['PA', 'LAT', 'multiple']:
+        raise_angle_error(input_angle)
 
     if not test_split:
         test_graph = config['train']['test_graph']
@@ -202,6 +223,6 @@ if __name__ == '__main__':
     logging.info('\nstarting session for graph file: \n' + train_graph + '\nparameter settings: \n' + parameter_string +
           '\n')
 
-    validation_accuracy = model_fit(train_graph, model_save_dir, conv_weights_path, test_split, test_graph, epochs,
-                                    train_batch_size, learning_rate=learning_rate, display_step=display_step)
+    validation_accuracy = model_fit(train_graph, model_save_dir, conv_weights_path, test_split, input_angle, test_graph,
+                                    epochs, train_batch_size, learning_rate=learning_rate, display_step=display_step)
 
