@@ -187,7 +187,15 @@ if __name__ == '__main__':
     train_graph = config['train']['train_graph']
     train_batch_size = int(config['train']['train_batch_size'])
     test_split = float(config['train']['test_split'])
+
+    if not test_split:
+        test_graph = config['train']['test_graph']
+    else:
+        test_graph = None
+
     display_step = int(config['train']['display_step'])
+    require_improvement = int(config['train']['require_improvement'])
+
     learning_rate = float(config['train']['learning_rate'])
     conv_weights_path = config['train']['conv_weights']
 
@@ -195,11 +203,6 @@ if __name__ == '__main__':
 
     if input_angle not in ['PA', 'LAT', 'multiple']:
         raise_angle_error(input_angle)
-
-    if not test_split:
-        test_graph = config['train']['test_graph']
-    else:
-        test_graph = None
 
     try:
         start_from_batch = int(config['train']['start_from_batch'])
@@ -221,5 +224,6 @@ if __name__ == '__main__':
             logging.info('{}: {}'.format(key, val))
 
     validation_accuracy = model_fit(train_graph, model_save_dir, conv_weights_path, input_angle, test_split, test_graph,
-                                    epochs, train_batch_size, learning_rate=learning_rate, display_step=display_step)
+                                    epochs, train_batch_size, learning_rate=learning_rate, display_step=display_step,
+                                    require_improvement=require_improvement)
 
