@@ -7,6 +7,7 @@ from progress.bar import Bar
 from random import shuffle
 import imgaug as ia
 import imgaug.augmenters as iaa
+import logging
 
 
 def get_available_gpus():
@@ -85,6 +86,7 @@ class MultiChestVGG:
 
         with tf.device('/cpu:0'):
             for angle in self.chest_angles:
+                logging.info('building conv net for angle ' + angle)
                 shape_calculator = np.array(self.place_holder_shape[1:3])
                 for layer in range(self.conv_layers):
                     for unit in range(self.conv_units[layer]):
@@ -678,7 +680,7 @@ class TrainNet:
             feed_dict = {self.ground_truth: self.train_labels,
                          self.net.dropout_keep_prob: 1.0}
             for angle in self.net.chest_angles:
-                feed_dict[self.net.input_images_by_angles[angle]] = self.test_batch[angle]
+                feed_dict[self.net.input_images_by_angles[angle]] = test_batch[angle]
 
             net_output = sess.run(self.net.predictions, feed_dict=feed_dict)
             try:
