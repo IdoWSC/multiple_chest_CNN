@@ -91,7 +91,7 @@ class MultiChestVGG:
 
                         if not layer and not unit:
                             # check the shape of one of the inputs
-                            angle_input = next(self.input_images_by_angles.values())
+                            angle_input = self.input_images_by_angles.popitem()[1]
                             in_filters = angle_input.get_shape()[-1]
                         else:
                             in_filters = out_filters
