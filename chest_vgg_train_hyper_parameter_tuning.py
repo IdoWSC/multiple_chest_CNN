@@ -58,9 +58,12 @@ if __name__ == '__main__':
                                                                        train_conv))
 
                             param_model_save_dir = os.path.join(model_save_dir,
-                                                                '{}Angle_augmentation{}_lr{}'.format(input_angle,
-                                                                                                     use_augmentation,
-                                                                                                     learning_rate))
+                                                                '{}Angle_augmentation{}_lr{}_BN{}_commonWeights{}'
+                                                                'convTrain'.format(input_angle,
+                                                                                   use_augmentation,
+                                                                                   learning_rate,
+                                                                                   common_conv_weights,
+                                                                                   train_conv))
 
                             validation_accuracy = model_fit(train_graph, param_model_save_dir, conv_weights_path,
                                                             input_angle,test_split, test_graph, epochs,
