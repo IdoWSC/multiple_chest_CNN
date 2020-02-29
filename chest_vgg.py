@@ -33,7 +33,7 @@ class MultiChestVGG:
 
 
     def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
-                 use_batch_norm=False, use_common_conv_weights=True):
+                 use_batch_norm=False, use_common_conv_weights=True, conv_trainable=False):
 
         if im_shape is not None and im_shape[0] is not None:
             self.place_holder_shape = [None]
@@ -55,7 +55,7 @@ class MultiChestVGG:
 
         with tf.variable_scope(self.net_name):
             with tf.variable_scope('conv_variables'):
-                self._build_conv_parameters(use_common_weights=use_common_conv_weights)
+                self._build_conv_parameters(conv_trainable, use_common_weights=use_common_conv_weights)
             with tf.variable_scope('fc_variables'):
                 self._build_fc_parameters()
             self._build_net()
