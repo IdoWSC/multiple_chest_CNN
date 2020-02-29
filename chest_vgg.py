@@ -405,7 +405,7 @@ class MultiChestVGG:
             if not k.startswith('conv'):
                 continue
             print(i, k, np.shape(weights[k]))
-            for angle in ['PA', 'LAT']:
+            for angle in self.chest_angles:
                 layers_and_params = k.split('_')
                 layers_and_params[0] = layers_and_params[0].replace('conv', '')
                 parameters_name_list = ['conv', angle]
