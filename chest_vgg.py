@@ -91,7 +91,7 @@ class MultiChestVGG:
 
                         if not layer and not unit:
                             # check the shape of one of the inputs
-                            angle_input = self.input_images_by_angles.popitem()[1]
+                            angle_input = next(iter(self.input_images_by_angles.values()))
                             in_filters = angle_input.get_shape()[-1]
                         else:
                             in_filters = out_filters
@@ -255,13 +255,10 @@ class MultiChestVGG:
         return tf.concat(out_split, axis=0)
 
     def build_structure_for_cpu(self):
-        in_splits = {}
-        for angle, place_holder in self.input_images_by_angles.items():
-            in_splits[angle] = place_holder
         with tf.device('/cpu:0'):
             x = {}
             # building a net on cpu from the chest angles inputs splits
-            for in_angle, angle_splits in in_splits:
+            for in_angle, angle_splits in self.input_images_by_angles.items():
                 x[in_angle] = angle_splits
             out_split = self.model_net('cpu', 0, x=x)
         return out_split
