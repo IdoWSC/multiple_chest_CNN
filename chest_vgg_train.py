@@ -37,7 +37,8 @@ logging.info('train label is {}'.format(label))
 
 def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_angle, test_split=0.2, random_test_mapping=None,
               epochs=20, train_batch_size=10, test_batch_size=None, train_summary=True, parameter_string='',
-              learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5, use_augmentations=True):
+              learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5, use_augmentations=True,
+              require_improvement=200):
 
     net = load_CNN(input_angle)
 
@@ -63,9 +64,6 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_ang
 
     # Iteration-number for last improvement to validation accuracy.
     last_improvement = 0
-
-    # Stop optimization if no improvement found in this many iterations.
-    require_improvement = 1000
 
     logging.info("\nModel ready.\n")
 
@@ -156,8 +154,8 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_ang
                     # unimprovement break condition
                     if global_step - last_improvement > require_improvement:
                         logging.info('no imporvement for {} itterations'.format(global_step - last_improvement))
-                        # unimprovement_break_cond = True
-                        # break
+                        unimprovement_break_cond = True
+                        break
 
                 batch_num += 1
                 if trainer.check_end_of_train_set():
