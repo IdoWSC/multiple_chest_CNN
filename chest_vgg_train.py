@@ -218,7 +218,7 @@ if __name__ == '__main__':
 
     logging.info('\nstarting session for graph file: \n' + train_graph + '\nparameter settings: \n' )
     for key, val in config['train'].items():
-            print('{}: {}'.format(key, val))
+            logging.info('{}: {}'.format(key, val))
 
     validation_accuracy = model_fit(train_graph, model_save_dir, conv_weights_path, input_angle, test_split, test_graph,
                                     epochs, train_batch_size, learning_rate=learning_rate, display_step=display_step)

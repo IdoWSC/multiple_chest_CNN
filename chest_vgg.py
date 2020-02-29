@@ -248,7 +248,7 @@ class MultiChestVGG:
                 with tf.variable_scope('GPU_{}'.format(i)):
                     x = {}
                     # building a net on each gpu from the chest angles inputs splits
-                    for in_angle, angle_splits in in_splits:
+                    for in_angle, angle_splits in in_splits.items():
                         x[in_angle] = angle_splits[i]
                     out_split.append(self.model_net('gpu', i, x=x))
 
