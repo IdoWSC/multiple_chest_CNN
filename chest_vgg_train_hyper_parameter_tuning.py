@@ -100,6 +100,6 @@ if __name__ == '__main__':
                                                             iteration['batch_norm'],
                                                             iteration['common_conv'],
                                                             iteration['conv_trainable'],
-                                                            iteration['validation_accracy']))
+                                                            iteration['validation_accuracy']))
 
 
