@@ -33,7 +33,8 @@ class MultiChestVGG:
 
 
     def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
-                 use_batch_norm=False, use_common_conv_weights=True, conv_trainable=False):
+                 use_batch_norm=False, use_common_conv_weights=True, conv_trainable=False, use_GAP=False,
+                 aggregate_last_conv_layer=False):
 
         if im_shape is not None and im_shape[0] is not None:
             self.place_holder_shape = [None]
@@ -57,8 +58,8 @@ class MultiChestVGG:
             with tf.variable_scope('conv_variables'):
                 self._build_conv_parameters(conv_trainable, use_common_weights=use_common_conv_weights)
             with tf.variable_scope('fc_variables'):
-                self._build_fc_parameters()
-            self._build_net()
+                self._build_fc_parameters(use_GAP=use_GAP, aggregate_last_conv_layer=aggregate_last_conv_layer)
+            self._build_net(use_GAP, aggregate_last_conv_layer)
             self._build_classifier_layer()
 
         self.add_summeries()
@@ -159,13 +160,19 @@ class MultiChestVGG:
                                                 initializer=tf.ones_initializer(),
                                                 trainable=False)
 
-    def _build_fc_parameters(self, trainable=True):
+    def _build_fc_parameters(self, trainable=True, use_GAP=False, aggregate_last_conv_layer=False):
 
         layer_size = 0  # init
         with tf.device('/cpu:0'):
             for layer in range(self.fc_layers):
-                if not layer:
-                    in_size = len(self.chest_angles) * self.fc1_layer_in_size
+                if not layer:  # first layer calculations
+                    if not use_GAP:
+                        in_size = self.fc1_layer_in_size
+                    else:
+                        in_size = self.conv_filter_sizes[-1]
+
+                    if aggregate_last_conv_layer:
+                        in_size *= 2
                 else:
                     in_size = layer_size
 
@@ -216,12 +223,14 @@ class MultiChestVGG:
                                     initializer=tf.zeros_initializer(),
                                     trainable=trainable)
 
-    def _build_net(self):
+    def _build_net(self, use_GAP, aggregate_last_conv_layer):
 
         if len(get_available_gpus()):
-            self.final_layer = self.build_structure_per_gpu()
+            self.final_layer = self.build_structure_per_gpu(use_GAP=use_GAP,
+                                                            aggregate_last_conv_layer=aggregate_last_conv_layer)
         else:
-            self.final_layer = self.build_structure_for_cpu()
+            self.final_layer = self.build_structure_for_cpu(use_GAP=use_GAP,
+                                                            aggregate_last_conv_layer=aggregate_last_conv_layer)
 
         if self.use_softmax:
             self.probs = tf.nn.softmax(self.final_layer, axis=-1, name='probs')
@@ -237,7 +246,7 @@ class MultiChestVGG:
         #     else:
         #         self.output = tf.nn.sigmoid(self.fc_out)
 
-    def build_structure_per_gpu(self):
+    def build_structure_per_gpu(self, use_GAP, aggregate_last_conv_layer):
 
         num_gpus = len(get_available_gpus())
 
@@ -252,20 +261,22 @@ class MultiChestVGG:
                     # building a net on each gpu from the chest angles inputs splits
                     for in_angle, angle_splits in in_splits.items():
                         x[in_angle] = angle_splits[i]
-                    out_split.append(self.model_net('gpu', i, x=x))
+                    out_split.append(self.model_net('gpu', i, x=x, use_GAP=use_GAP,
+                                                    aggregate_last_conv_layer=aggregate_last_conv_layer))
 
         return tf.concat(out_split, axis=0)
 
-    def build_structure_for_cpu(self):
+    def build_structure_for_cpu(self, use_GAP, aggregate_last_conv_layer):
         with tf.device('/cpu:0'):
             x = {}
             # building a net on cpu from the chest angles inputs splits
             for in_angle, angle_splits in self.input_images_by_angles.items():
                 x[in_angle] = angle_splits
-            out_split = self.model_net('cpu', 0, x=x)
+            out_split = self.model_net('cpu', 0, x=x, use_GAP=use_GAP,
+                                       aggregate_last_conv_layer=aggregate_last_conv_layer)
         return out_split
 
-    def model_net(self, device_type, device, x):
+    def model_net(self, device_type, device, x, use_GAP, aggregate_last_conv_layer):
 
         fc_in = []
         mean = tf.constant([123.68, 116.779, 103.939], dtype=tf.float32, shape=[1, 1, 1, 3], name='img_mean')
@@ -312,10 +323,17 @@ class MultiChestVGG:
                         layer_input = self.layers['bn_{}_{}_gpu{}'.format(angle, layer + 1, device)]
                     else:
                         layer_input = self.layers['pool_{}_{}_{}_{}'.format(angle, layer + 1, device_type, str(device))]
-                fc_in.append(tf.reshape(layer_input,
-                                        [-1, self.fc1_layer_in_size]))  # squash tensor coming from conv to fc
 
-        layer_input = tf.concat(fc_in, axis=1)
+                if use_GAP:
+                    conv_last = tf.reduce_meav(layer_input, axis=[1, 2])
+                else:  # squash tensor coming from conv to fc
+                    conv_last = tf.reshape(layer_input, [-1, self.fc1_layer_in_size])
+                fc_in.append(conv_last)
+
+        if aggregate_last_conv_layer:
+            layer_input = tf.math.add_n(fc_in)
+        else:
+            layer_input = tf.concat(fc_in, axis=1)
 
         with tf.variable_scope('fully_connected'):
             for layer in range(self.fc_layers):
