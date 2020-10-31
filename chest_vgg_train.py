@@ -35,12 +35,14 @@ init_logging(os.path.join(model_save_dir, 'train.log'))
 logging.info('train label is {}'.format(label))
 
 
-def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_angle, test_split=0.2, random_test_mapping=None,
-              epochs=20, train_batch_size=10, test_batch_size=None, train_summary=True, parameter_string='',
-              learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5, use_augmentations=True,
-              require_improvement=200, use_batch_norm=False, use_common_conv_weights=True, conv_trainable=False):
+def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_angle, test_split=0.2,
+              random_test_mapping=None, epochs=20, train_batch_size=10, test_batch_size=None, train_summary=True,
+              parameter_string='', learning_rate=0.0001, display_step=100, start_from_batch=0, dropout=0.5,
+              use_augmentations=True, require_improvement=200, use_batch_norm=False, use_common_conv_weights=True,
+              conv_trainable=False, use_GAP=False, aggregate_last_conv_layer=False):
 
-    net = load_CNN(input_angle, use_batch_norm, use_common_conv_weights, conv_trainable)
+    net = load_CNN(input_angle, use_batch_norm, use_common_conv_weights, conv_trainable, use_GAP,
+                 aggregate_last_conv_layer)
 
     logging.info('\ncreating BatchOrganiser')
     samples = BatchOrganiser(random_train_mapping, train_batch_size, test_batch_size, test_split, random_test_mapping,
@@ -166,15 +168,19 @@ def model_fit(random_train_mapping, model_save_dir, conv_weights_path, input_ang
     return best_validation_accuracy
 
 
-def load_CNN(input_angle, use_batch_norm=False, use_common_conv_weights=True, conv_trainable=False):
+def load_CNN(input_angle, use_batch_norm=False, use_common_conv_weights=True, conv_trainable=False,
+             use_GAP=False, aggregate_last_conv_layer=False):
 
     if input_angle == 'multiple':
         net = MultiChestVGG(use_batch_norm=use_batch_norm, use_common_conv_weights=use_common_conv_weights,
-                            conv_trainable=conv_trainable)
+                            conv_trainable=conv_trainable, use_GAP=use_GAP,
+                            aggregate_last_conv_layer=aggregate_last_conv_layer)
     elif input_angle == 'PA':
-        net = PAChestVGG(use_batch_norm=use_batch_norm, conv_trainable=conv_trainable)
+        net = PAChestVGG(use_batch_norm=use_batch_norm, conv_trainable=conv_trainable, use_GAP=use_GAP,
+                         aggregate_last_conv_layer=aggregate_last_conv_layer)
     elif input_angle == 'LAT':
-        net = LATChestVGG(use_batch_norm=use_batch_norm, conv_trainable=conv_trainable)
+        net = LATChestVGG(use_batch_norm=use_batch_norm, conv_trainable=conv_trainable, use_GAP=use_GAP,
+                          aggregate_last_conv_layer=aggregate_last_conv_layer)
     else:
         raise_angle_error(input_angle)
     return net
