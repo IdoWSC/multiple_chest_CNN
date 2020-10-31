@@ -28,8 +28,11 @@ if __name__ == '__main__':
     use_augmentations = [bool(int(val)) for val in config['parameter_search']['use_augmentations'].split(', ')]
 
     use_batch_norm = [True, False]
-    use_common_conv_weights = [True, False]
+    common_conv_weights = True
     conv_trainable = [True, False]
+
+    use_GAP = [True, False]
+    aggregate_last_conv_layer = [True, False]
 
     optimization_iters = []
 
@@ -37,53 +40,54 @@ if __name__ == '__main__':
         for use_augmentation in use_augmentations:
             for learning_rate in learning_rates:
                 for batch_norm in use_batch_norm:
-                    for common_conv_weights in use_common_conv_weights:
-                        for train_conv in conv_trainable:
+                    for train_conv in conv_trainable:
+                        for GAP in use_GAP:
+                            for agg_lst_lyr in aggregate_last_conv_layer:
 
+                                logging.info('\nstarting session for graph file: \n' + train_graph +
+                                             '\nparameter settings: \n')
 
+                                logging.info('input_angle: {}\n'
+                                             'use_augmentation: {}\n'
+                                             'learning_rate: {}\n'
+                                             'batch_norm: {}\n'
+                                             'common_conv: {}\n'
+                                             'conv_trainable: {}\n'.format(input_angle,
+                                                                           use_augmentation,
+                                                                           learning_rate,
+                                                                           batch_norm,
+                                                                           common_conv_weights,
+                                                                           train_conv))
 
-                            logging.info('\nstarting session for graph file: \n' + train_graph +
-                                         '\nparameter settings: \n')
+                                param_model_save_dir = os.path.join(model_save_dir,
+                                                                    '{}Angle_augmentation{}_lr{}_BN{}_commonWeights{}'
+                                                                    'convTrain'.format(input_angle,
+                                                                                       use_augmentation,
+                                                                                       learning_rate,
+                                                                                       common_conv_weights,
+                                                                                       train_conv))
 
-                            logging.info('input_angle: {}\n'
-                                         'use_augmentation: {}\n'
-                                         'learning_rate: {}\n'
-                                         'batch_norm: {}\n'
-                                         'common_conv: {}\n'
-                                         'conv_trainable: {}\n'.format(input_angle,
-                                                                       use_augmentation,
-                                                                       learning_rate,
-                                                                       batch_norm,
-                                                                       common_conv_weights,
-                                                                       train_conv))
+                                validation_accuracy = model_fit(train_graph, param_model_save_dir, conv_weights_path,
+                                                                input_angle,test_split, test_graph, epochs,
+                                                                train_batch_size, learning_rate=learning_rate,
+                                                                display_step=display_step,
+                                                                require_improvement=require_improvement,
+                                                                use_augmentations=use_augmentation,
+                                                                use_batch_norm=batch_norm,
+                                                                use_common_conv_weights=common_conv_weights,
+                                                                conv_trainable=train_conv,
+                                                                use_GAP=GAP,
+                                                                aggregate_last_conv_layer=agg_lst_lyr)
 
-                            param_model_save_dir = os.path.join(model_save_dir,
-                                                                '{}Angle_augmentation{}_lr{}_BN{}_commonWeights{}'
-                                                                'convTrain'.format(input_angle,
-                                                                                   use_augmentation,
-                                                                                   learning_rate,
-                                                                                   common_conv_weights,
-                                                                                   train_conv))
-
-                            validation_accuracy = model_fit(train_graph, param_model_save_dir, conv_weights_path,
-                                                            input_angle,test_split, test_graph, epochs,
-                                                            train_batch_size, learning_rate=learning_rate,
-                                                            display_step=display_step,
-                                                            require_improvement=require_improvement,
-                                                            use_augmentations=use_augmentation,
-                                                            use_batch_norm=batch_norm,
-                                                            use_common_conv_weights=common_conv_weights,
-                                                            conv_trainable=train_conv)
-
-                            iter_dict = {'input_angle': input_angle,
-                                         'use_augmentation': use_augmentation,
-                                         'learning_rate': learning_rate,
-                                         'batch_norm': batch_norm,
-                                         'common_conv': common_conv_weights,
-                                         'conv_trainable': train_conv,
-                                         'validation_accuracy': validation_accuracy}
-                            optimization_iters.append(iter_dict)
-                            tf.reset_default_graph()
+                                iter_dict = {'input_angle': input_angle,
+                                             'use_augmentation': use_augmentation,
+                                             'learning_rate': learning_rate,
+                                             'batch_norm': batch_norm,
+                                             'common_conv': common_conv_weights,
+                                             'conv_trainable': train_conv,
+                                             'validation_accuracy': validation_accuracy}
+                                optimization_iters.append(iter_dict)
+                                tf.reset_default_graph()
 
     logging.info('optimization results:\n')
     optimization_iters = sorted(optimization_iters, key=lambda i: i['validation_accuracy'], reverse=True)
