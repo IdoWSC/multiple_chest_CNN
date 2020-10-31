@@ -469,7 +469,7 @@ class PAChestVGG(MultiChestVGG):
     chest_angles = ['PA']
 
     def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
-                 use_batch_norm=False, conv_trainable=False):
+                 use_batch_norm=False, conv_trainable=False, use_GAP=False, aggregate_last_conv_layer=False):
         super().__init__(im_shape, num_of_classes, use_softmax, is_training, sess, use_batch_norm,
                          use_common_conv_weights=True, conv_trainable=conv_trainable)
 
@@ -478,7 +478,7 @@ class LATChestVGG(MultiChestVGG):
     chest_angles = ['LAT']
 
     def __init__(self, im_shape=None, num_of_classes=1, use_softmax=False, is_training=True, sess=None,
-                 use_batch_norm=False, conv_trainable=False):
+                 use_batch_norm=False, conv_trainable=False, use_GAP=False, aggregate_last_conv_layer=False):
         super().__init__(im_shape, num_of_classes, use_softmax, is_training, sess, use_batch_norm,
                          use_common_conv_weights=True, conv_trainable=conv_trainable)
 
